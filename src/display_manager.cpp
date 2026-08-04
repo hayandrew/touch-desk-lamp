@@ -14,15 +14,12 @@ namespace DisplayManager {
     };
     
     // UI State Caching
-    static bool lastColorPickerActive = false;
+    static bool lastColorPickerActive = true;
     static bool lastLampOn = false;
     static int lastBrightness = -1;
     static uint16_t lastColor = 0;
     static int lastSegmentIndex = -1;
-    
-    static int lastDotX = -1;
-    static int lastDotY = -1;
-    static bool lastTouched = false;
+
 
     // Helper: Hue to RGB565 (kept for fallback compatibility if needed, but not primary)
     uint16_t hueToRGB565(int hue) {
@@ -203,8 +200,7 @@ namespace DisplayManager {
         Serial.println("[DisplayManager] Display initialized.");
     }
 
-    void update(bool isTouched, int x, int y, const char* gestureName, const char* eventName,
-                bool lampOn, int brightness, uint16_t color, int activeSegmentIndex, bool colorPickerActive) {
+    void update(bool lampOn, int brightness, uint16_t color, int activeSegmentIndex, bool colorPickerActive) {
         
         // 1. Transition between screens
         if (colorPickerActive != lastColorPickerActive) {
@@ -222,61 +218,7 @@ namespace DisplayManager {
             lastColorPickerActive = colorPickerActive;
         }
 
-        // 2. Erase previous touch tracking dot
-        if (lastTouched && (!isTouched || x != lastDotX || y != lastDotY)) {
-            if (lastDotX != -1 && lastDotY != -1) {
-                int dist_ctr_sq = (lastDotX - 120)*(lastDotX - 120) + (lastDotY - 120)*(lastDotY - 120);
-                
-                if (colorPickerActive) {
-                    tft.fillCircle(lastDotX, lastDotY, 6, TFT_BLACK);
-                    if (dist_ctr_sq <= (CLOSE_BTN_RADIUS+8)*(CLOSE_BTN_RADIUS+8)) {
-                        // Repatch center checkmark
-                        tft.fillCircle(120, 120, CLOSE_BTN_RADIUS, color);
-                        tft.drawCircle(120, 120, CLOSE_BTN_RADIUS, TFT_WHITE);
-                        drawCheckmark(120, 120, color);
-                    } else if (dist_ctr_sq <= (WHEEL_OUTER_RADIUS+8)*(WHEEL_OUTER_RADIUS+8)) {
-                        // Repatch affected wedges
-                        float touch_angle = atan2(lastDotY - 120, lastDotX - 120) * RAD_TO_DEG;
-                        if (touch_angle < 0) touch_angle += 360;
-                        int segIndex = (int)(touch_angle) / 36;
-                        
-                        eraseSegmentIndicator(segIndex);
-                        if (segIndex == activeSegmentIndex) {
-                            drawSegmentIndicator(segIndex);
-                        }
-                    }
-                } else {
-                    // Erase touch dot in quadrant mode by triggering full redraw of the touched quadrant
-                    if (lastDotX < 120 && lastDotY < 120) {
-                        lastLampOn = !lampOn; // Force redraw of UL (Power)
-                    } else if (lastDotX >= 120 && lastDotY < 120) {
-                        lastColor = 0; // Force redraw of UR (Color preview)
-                    } else if (lastDotX < 120 && lastDotY >= 120) {
-                        // Redraw LL (Bright -)
-                        uint16_t bg = tft.color565(50, 50, 50);
-                        tft.fillRect(0, 121, 119, 119, bg);
-                        tft.setTextDatum(MC_DATUM);
-                        tft.setTextColor(TFT_WHITE, bg);
-                        tft.setTextSize(2);
-                        tft.drawString("-", 70, 170, 4);
-                        tft.setTextSize(1);
-                        lastBrightness = -1; // Restore dividers and HUD
-                    } else {
-                        // Redraw LR (Bright +)
-                        uint16_t bg = tft.color565(160, 160, 160);
-                        tft.fillRect(121, 121, 119, 119, bg);
-                        tft.setTextDatum(MC_DATUM);
-                        tft.setTextColor(TFT_BLACK, bg);
-                        tft.setTextSize(2);
-                        tft.drawString("+", 170, 170, 4);
-                        tft.setTextSize(1);
-                        lastBrightness = -1; // Restore dividers and HUD
-                    }
-                }
-            }
-        }
-
-        // 3. Dynamic UI updating
+        // 2. Dynamic UI updating
         if (colorPickerActive) {
             // Draw segment selected dot
             if (activeSegmentIndex != lastSegmentIndex) {
@@ -326,8 +268,8 @@ namespace DisplayManager {
                 tft.drawFastHLine(0, 119, 240, TFT_BLACK);
                 tft.drawFastHLine(0, 120, 240, TFT_BLACK);
 
-                tft.fillCircle(120, 120, 28, TFT_BLACK);
-                tft.drawCircle(120, 120, 28, TFT_BLACK);
+                tft.fillCircle(120, 120, 33, TFT_BLACK);
+                tft.drawCircle(120, 120, 33, TFT_BLACK);
                 tft.setTextDatum(MC_DATUM);
                 tft.setTextColor(tft.color565(200, 200, 200), TFT_BLACK);
                 
@@ -338,17 +280,6 @@ namespace DisplayManager {
                 lastBrightness = brightness;
             }
         }
-
-        // 4. Render active Touch Dot
-        if (isTouched) {
-            tft.fillCircle(x, y, 6, TFT_GREEN);
-            lastDotX = x;
-            lastDotY = y;
-        } else {
-            lastDotX = -1;
-            lastDotY = -1;
-        }
-        lastTouched = isTouched;
     }
 
     void drawOtaProgress(unsigned int progress, unsigned int total) {

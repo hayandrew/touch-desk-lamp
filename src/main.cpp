@@ -177,11 +177,6 @@ void loop() {
 
   // Draw updated states
   DisplayManager::update(
-    isTouched,
-    TouchManager::getX(),
-    TouchManager::getY(),
-    TouchManager::getGestureName(),
-    TouchManager::getEventName(),
     lampOn,
     brightness,
     activeColor,

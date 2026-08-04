@@ -45,6 +45,6 @@
 // Color Wheel Settings
 #define WHEEL_INNER_RADIUS 55
 #define WHEEL_OUTER_RADIUS 110
-#define CLOSE_BTN_RADIUS   25
+#define CLOSE_BTN_RADIUS   30
 
 #endif // PROJECT_CONFIG_H

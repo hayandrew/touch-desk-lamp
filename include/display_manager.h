@@ -7,9 +7,8 @@ namespace DisplayManager {
     // Initialize display and turn on backlight
     void init();
 
-    // Redraw screen with latest touch information, lamp state, and overlay state
-    void update(bool isTouched, int x, int y, const char* gestureName, const char* eventName,
-                bool lampOn, int brightness, uint16_t color, int activeSegmentIndex, bool colorPickerActive);
+    // Redraw screen with latest lamp state and overlay state
+    void update(bool lampOn, int brightness, uint16_t color, int activeSegmentIndex, bool colorPickerActive);
 
     // Convert a hue value (0-359) to a 16-bit RGB565 color value
     uint16_t hueToRGB565(int hue);
