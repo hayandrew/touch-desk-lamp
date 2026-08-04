@@ -87,7 +87,7 @@ namespace DisplayManager {
         int end_angle = (segmentIndex + 1) * 36 - 2;
         uint16_t col = segmentColors[segmentIndex];
         
-        for (int h = start_angle; h <= end_angle; h++) {
+        for (float h = start_angle; h <= end_angle; h += 0.2f) {
             float angle = h * DEG_TO_RAD;
             float ca = cos(angle);
             float sa = sin(angle);
@@ -141,7 +141,7 @@ namespace DisplayManager {
             int end_angle = (i + 1) * 36 - 2;
             uint16_t col = segmentColors[i];
             
-            for (int h = start_angle; h <= end_angle; h++) {
+            for (float h = start_angle; h <= end_angle; h += 0.2f) {
                 float angle = h * DEG_TO_RAD;
                 float ca = cos(angle);
                 float sa = sin(angle);
