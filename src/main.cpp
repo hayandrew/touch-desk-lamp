@@ -9,8 +9,8 @@
 // Lamp State Variables
 static bool lampOn = false;
 static int brightness = DEFAULT_BRIGHTNESS;
-static uint16_t activeColor = TFT_GOLD;
-static int activeHue = 45; // Start with gold/orange hue (approx 45 degrees)
+static uint16_t activeColor = 0xFD20; // Default to Orange (approx same as TFT_GOLD)
+static int activeSegmentIndex = 4;    // Default to segment 4 (Orange)
 static bool colorPickerActive = false;
 
 // Touch State Caching
@@ -117,26 +117,27 @@ void loop() {
 
     if (colorPickerActive) {
       if (!lastTouchedState) {
-        // Tapped close button (X) in the center
+        // Tapped close button (checkmark) in the center
         if (dist_sq <= CLOSE_BTN_RADIUS * CLOSE_BTN_RADIUS) {
           colorPickerActive = false;
-          Serial.println("[Main] Color Picker overlay closed.");
+          Serial.println("[Main] Color Picker overlay closed (checkmark).");
           delay(150); // Small debounce
         }
       }
-      // Dragging/Tapping inside the Color Wheel Ring boundaries
+      // Dragging/Tapping inside the Color Ring boundaries
       if (dist_sq >= WHEEL_INNER_RADIUS * WHEEL_INNER_RADIUS && 
           dist_sq <= WHEEL_OUTER_RADIUS * WHEEL_OUTER_RADIUS) {
         float angle_deg = atan2(dy, dx) * RAD_TO_DEG;
         if (angle_deg < 0) angle_deg += 360;
         
-        activeHue = (int)angle_deg % 360;
-        activeColor = DisplayManager::hueToRGB565(activeHue);
+        int segIndex = (int)(angle_deg) / 36 % 10;
+        activeSegmentIndex = segIndex;
+        activeColor = DisplayManager::getSegmentColor(activeSegmentIndex);
         
         // Print color update to serial console
         static unsigned long lastPrintTime = 0;
         if (millis() - lastPrintTime >= 100) {
-          Serial.printf("[Main] Color drag: Hue=%d, RGB=0x%04X\n", activeHue, activeColor);
+          Serial.printf("[Main] Color drag: Segment=%d, RGB=0x%04X\n", activeSegmentIndex, activeColor);
           lastPrintTime = millis();
         }
       }
@@ -184,7 +185,7 @@ void loop() {
     lampOn,
     brightness,
     activeColor,
-    activeHue,
+    activeSegmentIndex,
     colorPickerActive
   );
 

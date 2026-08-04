@@ -6,44 +6,101 @@
 namespace DisplayManager {
     static TFT_eSPI tft = TFT_eSPI();
     
+    // Segmented Colors Initialization
+    static uint16_t segmentColors[10];
+    static const char* segmentNames[10] = {
+        "Cold White", "Warm White", "Red", "Pink", "Orange",
+        "Yellow", "Green", "Blue", "Indigo", "Violet"
+    };
+    
     // UI State Caching
     static bool lastColorPickerActive = false;
     static bool lastLampOn = false;
     static int lastBrightness = -1;
     static uint16_t lastColor = 0;
-    static int lastHue = -1;
+    static int lastSegmentIndex = -1;
     
     static int lastDotX = -1;
     static int lastDotY = -1;
     static bool lastTouched = false;
 
-    // Helper: Fast HSL/HSV to RGB565 converter
+    // Helper: Hue to RGB565 (kept for fallback compatibility if needed, but not primary)
     uint16_t hueToRGB565(int hue) {
-        // hue should be in range 0-359
         hue = (hue % 360 + 360) % 360;
-        
         float h = hue / 60.0;
         float x = 1.0 - fabs(fmod(h, 2.0) - 1.0);
         float r = 0, g = 0, b = 0;
-        
         if (h < 1.0) { r = 1.0; g = x; }
         else if (h < 2.0) { r = x; g = 1.0; }
         else if (h < 3.0) { g = 1.0; b = x; }
         else if (h < 4.0) { g = x; b = 1.0; }
         else if (h < 5.0) { r = x; b = 1.0; }
         else { r = 1.0; b = x; }
-        
         uint8_t red = r * 255;
         uint8_t green = g * 255;
         uint8_t blue = b * 255;
-        
         return ((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3);
+    }
+
+    uint16_t getSegmentColor(int segmentIndex) {
+        if (segmentIndex < 0 || segmentIndex >= 10) return TFT_WHITE;
+        return segmentColors[segmentIndex];
+    }
+
+    // Draw checkmark symbol inside the center button with high-contrast luminance logic
+    void drawCheckmark(int cx, int cy, uint16_t color) {
+        // Extract RGB component weights to calculate relative luminance
+        uint8_t r = ((color >> 11) & 0x1F) * 255 / 31;
+        uint8_t g = ((color >> 5) & 0x3F) * 255 / 63;
+        uint8_t b = (color & 0x1F) * 255 / 31;
+        float luminance = 0.299f * r + 0.587f * g + 0.114f * b;
+        
+        // Use black checkmark for light background, white for dark background
+        uint16_t chkColor = (luminance > 140.0f) ? TFT_BLACK : TFT_WHITE;
+        
+        // Draw ✓ symbol vector path (bold)
+        tft.drawLine(cx - 8, cy, cx - 2, cy + 6, chkColor);
+        tft.drawLine(cx - 8, cy + 1, cx - 2, cy + 7, chkColor);
+        tft.drawLine(cx - 8, cy - 1, cx - 2, cy + 5, chkColor);
+        
+        tft.drawLine(cx - 2, cy + 6, cx + 10, cy - 6, chkColor);
+        tft.drawLine(cx - 2, cy + 7, cx + 10, cy - 5, chkColor);
+        tft.drawLine(cx - 2, cy + 5, cx + 10, cy - 7, chkColor);
+    }
+
+    void drawSegmentIndicator(int segmentIndex) {
+        if (segmentIndex < 0 || segmentIndex >= 10) return;
+        // Midpoint angle of the segment (wedge width is 34 degrees plus 2 degrees gap)
+        float angle = (segmentIndex * 36 + 17) * DEG_TO_RAD;
+        float ca = cos(angle);
+        float sa = sin(angle);
+        int mx = 120 + 82.5f * ca; // Centered radially in the ring
+        int my = 120 + 82.5f * sa;
+        
+        tft.fillCircle(mx, my, 5, TFT_WHITE);
+        tft.fillCircle(mx, my, 3, TFT_BLACK);
+    }
+
+    void eraseSegmentIndicator(int segmentIndex) {
+        if (segmentIndex < 0 || segmentIndex >= 10) return;
+        int start_angle = segmentIndex * 36;
+        int end_angle = (segmentIndex + 1) * 36 - 2;
+        uint16_t col = segmentColors[segmentIndex];
+        
+        for (int h = start_angle; h <= end_angle; h++) {
+            float angle = h * DEG_TO_RAD;
+            float ca = cos(angle);
+            float sa = sin(angle);
+            tft.drawLine(120 + WHEEL_INNER_RADIUS * ca, 120 + WHEEL_INNER_RADIUS * sa,
+                         120 + WHEEL_OUTER_RADIUS * ca, 120 + WHEEL_OUTER_RADIUS * sa,
+                         col);
+        }
     }
 
     void drawStaticQuadrants() {
         tft.fillScreen(TFT_BLACK);
         
-        // Draw screen boundary circle (white)
+        // Draw outer boundary
         tft.drawCircle(120, 120, 119, TFT_WHITE);
         tft.drawCircle(120, 120, 118, TFT_DARKGREY);
 
@@ -53,13 +110,13 @@ namespace DisplayManager {
 
         tft.setTextDatum(MC_DATUM);
 
-        // Bottom-Left Quadrant: Brightness Down (-)
+        // Bottom-Left: Brightness Down
         tft.setTextColor(TFT_WHITE, TFT_BLACK);
         tft.drawString("BRIGHT -", 60, 150, 2);
         tft.setTextColor(TFT_CYAN, TFT_BLACK);
         tft.drawString("-", 60, 185, 4);
 
-        // Bottom-Right Quadrant: Brightness Up (+)
+        // Bottom-Right: Brightness Up
         tft.setTextColor(TFT_WHITE, TFT_BLACK);
         tft.drawString("BRIGHT +", 180, 150, 2);
         tft.setTextColor(TFT_CYAN, TFT_BLACK);
@@ -78,23 +135,21 @@ namespace DisplayManager {
         tft.setTextColor(TFT_WHITE, TFT_BLACK);
         tft.drawString("SELECT COLOR", 120, 25, 2);
 
-        // Draw HSL continuous color wheel gradient
-        // Sweep 360 degrees and draw radial lines from inner radius (55) to outer radius (110)
-        for (int h = 0; h < 360; h++) {
-            float angle = h * DEG_TO_RAD;
-            float ca = cos(angle);
-            float sa = sin(angle);
-            uint16_t col = hueToRGB565(h);
-            tft.drawLine(120 + WHEEL_INNER_RADIUS * ca, 120 + WHEEL_INNER_RADIUS * sa,
-                         120 + WHEEL_OUTER_RADIUS * ca, 120 + WHEEL_OUTER_RADIUS * sa,
-                         col);
+        // Draw 10 discrete color wedges with 2-degree gaps
+        for (int i = 0; i < 10; i++) {
+            int start_angle = i * 36;
+            int end_angle = (i + 1) * 36 - 2;
+            uint16_t col = segmentColors[i];
+            
+            for (int h = start_angle; h <= end_angle; h++) {
+                float angle = h * DEG_TO_RAD;
+                float ca = cos(angle);
+                float sa = sin(angle);
+                tft.drawLine(120 + WHEEL_INNER_RADIUS * ca, 120 + WHEEL_INNER_RADIUS * sa,
+                             120 + WHEEL_OUTER_RADIUS * ca, 120 + WHEEL_OUTER_RADIUS * sa,
+                             col);
+            }
         }
-
-        // Draw central "X" close button (radius 25)
-        tft.fillCircle(120, 120, CLOSE_BTN_RADIUS, TFT_RED);
-        tft.drawCircle(120, 120, CLOSE_BTN_RADIUS, TFT_WHITE);
-        tft.setTextColor(TFT_WHITE);
-        tft.drawString("X", 120, 120, 4);
     }
 
     void init() {
@@ -117,22 +172,35 @@ namespace DisplayManager {
         tft.init();
         tft.setRotation(0);
         
-        // Render initial view
+        // Initialize dynamic colors
+        segmentColors[0] = tft.color565(225, 240, 255); // Cold White
+        segmentColors[1] = tft.color565(255, 230, 160); // Warm White
+        segmentColors[2] = 0xF800;                       // Red
+        segmentColors[3] = tft.color565(255, 105, 180); // Pink
+        segmentColors[4] = 0xFD20;                       // Orange
+        segmentColors[5] = 0xFFE0;                       // Yellow
+        segmentColors[6] = tft.color565(0, 200, 0);     // Green
+        segmentColors[7] = 0x001F;                       // Blue
+        segmentColors[8] = tft.color565(75, 0, 130);     // Indigo
+        segmentColors[9] = tft.color565(180, 50, 240);   // Violet
+        
+        // Render initial quadrants
         drawStaticQuadrants();
         Serial.println("[DisplayManager] Display initialized.");
     }
 
     void update(bool isTouched, int x, int y, const char* gestureName, const char* eventName,
-                bool lampOn, int brightness, uint16_t color, int hue, bool colorPickerActive) {
+                bool lampOn, int brightness, uint16_t color, int activeSegmentIndex, bool colorPickerActive) {
         
         // 1. Transition between screens
         if (colorPickerActive != lastColorPickerActive) {
             if (colorPickerActive) {
                 drawStaticColorPicker();
-                lastHue = -1; // Force selected hue marker update
+                lastSegmentIndex = -1; // Force redraw of segment indicator
+                lastColor = 0;         // Force redraw of checkmark preview
             } else {
                 drawStaticQuadrants();
-                // Force redraw of all quadrant dynamic components
+                // Force redraw of all quadrant components
                 lastBrightness = -1;
                 lastLampOn = !lampOn; 
                 lastColor = 0;
@@ -143,40 +211,31 @@ namespace DisplayManager {
         // 2. Erase previous touch tracking dot
         if (lastTouched && (!isTouched || x != lastDotX || y != lastDotY)) {
             if (lastDotX != -1 && lastDotY != -1) {
-                // Erase dot with black
                 tft.fillCircle(lastDotX, lastDotY, 6, TFT_BLACK);
                 
-                // Repatch UI elements if the dot erased them
                 int dist_ctr_sq = (lastDotX - 120)*(lastDotX - 120) + (lastDotY - 120)*(lastDotY - 120);
                 
                 if (colorPickerActive) {
-                    // Repatch color wheel or X button
                     if (dist_ctr_sq <= (CLOSE_BTN_RADIUS+8)*(CLOSE_BTN_RADIUS+8)) {
-                        tft.fillCircle(120, 120, CLOSE_BTN_RADIUS, TFT_RED);
+                        // Repatch center checkmark
+                        tft.fillCircle(120, 120, CLOSE_BTN_RADIUS, color);
                         tft.drawCircle(120, 120, CLOSE_BTN_RADIUS, TFT_WHITE);
-                        tft.setTextColor(TFT_WHITE);
-                        tft.drawString("X", 120, 120, 4);
+                        drawCheckmark(120, 120, color);
                     } else if (dist_ctr_sq >= (WHEEL_INNER_RADIUS-8)*(WHEEL_INNER_RADIUS-8) && 
                                dist_ctr_sq <= (WHEEL_OUTER_RADIUS+8)*(WHEEL_OUTER_RADIUS+8)) {
-                        // Repatch affected wheel slices
+                        // Repatch touched segment(s)
                         float touch_angle = atan2(lastDotY - 120, lastDotX - 120) * RAD_TO_DEG;
                         if (touch_angle < 0) touch_angle += 360;
-                        int touch_hue = (int)touch_angle;
+                        int segIndex = (int)(touch_angle) / 36;
                         
-                        for (int h = touch_hue - 4; h <= touch_hue + 4; h++) {
-                            int norm_h = (h + 360) % 360;
-                            float angle = norm_h * DEG_TO_RAD;
-                            float ca = cos(angle);
-                            float sa = sin(angle);
-                            tft.drawLine(120 + WHEEL_INNER_RADIUS * ca, 120 + WHEEL_INNER_RADIUS * sa,
-                                         120 + WHEEL_OUTER_RADIUS * ca, 120 + WHEEL_OUTER_RADIUS * sa,
-                                         hueToRGB565(norm_h));
+                        eraseSegmentIndicator(segIndex);
+                        if (segIndex == activeSegmentIndex) {
+                            drawSegmentIndicator(segIndex);
                         }
                     }
                 } else {
-                    // Repatch crosshairs or central HUD
                     if (dist_ctr_sq <= 30*30) {
-                        lastBrightness = -1; // Forces center HUD redraw
+                        lastBrightness = -1; // Force center HUD redraw
                     }
                     if (abs(lastDotX - 120) <= 8) {
                         tft.drawLine(120, 0, 120, 240, TFT_DARKGREY);
@@ -186,7 +245,6 @@ namespace DisplayManager {
                     }
                 }
 
-                // Repatch outer boundaries if damaged
                 if (dist_ctr_sq >= 110*110) {
                     tft.drawCircle(120, 120, 119, TFT_WHITE);
                     tft.drawCircle(120, 120, 118, TFT_DARKGREY);
@@ -194,52 +252,44 @@ namespace DisplayManager {
             }
         }
 
-        // 3. Dynamic HUD updates based on active screen
+        // 3. Dynamic UI updating
         if (colorPickerActive) {
-            // Render Selected Hue Indicator
-            if (hue != lastHue) {
-                // Erase old marker by redrawing that part of the color wheel
-                if (lastHue >= 0) {
-                    for (int h = lastHue - 4; h <= lastHue + 4; h++) {
-                        int norm_h = (h + 360) % 360;
-                        float angle = norm_h * DEG_TO_RAD;
-                        float ca = cos(angle);
-                        float sa = sin(angle);
-                        tft.drawLine(120 + WHEEL_INNER_RADIUS * ca, 120 + WHEEL_INNER_RADIUS * sa,
-                                     120 + WHEEL_OUTER_RADIUS * ca, 120 + WHEEL_OUTER_RADIUS * sa,
-                                     hueToRGB565(norm_h));
-                    }
+            // Draw segment selected dot
+            if (activeSegmentIndex != lastSegmentIndex) {
+                if (lastSegmentIndex >= 0) {
+                    eraseSegmentIndicator(lastSegmentIndex);
                 }
+                drawSegmentIndicator(activeSegmentIndex);
+                lastSegmentIndex = activeSegmentIndex;
+            }
 
-                // Draw new marker (small white dot with black border)
-                float angle = hue * DEG_TO_RAD;
-                float ca = cos(angle);
-                float sa = sin(angle);
-                int mx = 120 + 82.5 * ca; // 82.5 is the midpoint of the color wheel ring
-                int my = 120 + 82.5 * sa;
-                tft.fillCircle(mx, my, 5, TFT_WHITE);
-                tft.fillCircle(mx, my, 3, color);
+            // Draw center checkmark button filled with active color selection
+            if (color != lastColor) {
+                tft.fillCircle(120, 120, CLOSE_BTN_RADIUS, color);
+                tft.drawCircle(120, 120, CLOSE_BTN_RADIUS, TFT_WHITE);
+                drawCheckmark(120, 120, color);
                 
-                lastHue = hue;
+                // Clear selection title and write active color name
+                tft.fillRect(35, 10, 170, 25, TFT_BLACK);
+                tft.setTextDatum(MC_DATUM);
+                tft.setTextColor(color, TFT_BLACK);
+                tft.drawString(segmentNames[activeSegmentIndex], 120, 25, 2);
+                
+                lastColor = color;
             }
         } else {
-            // Dynamic Quadrants View Updating
-            
             // Top-Left (UL) Quadrant: Power Switch
             if (lampOn != lastLampOn) {
-                // Clear UL background
                 tft.fillRect(5, 5, 110, 110, TFT_BLACK);
                 tft.setTextDatum(MC_DATUM);
                 tft.setTextColor(TFT_WHITE, TFT_BLACK);
                 tft.drawString("POWER", 60, 35, 2);
 
                 if (lampOn) {
-                    // Glowing Green power label
                     tft.fillCircle(60, 75, 18, TFT_GREEN);
                     tft.setTextColor(TFT_BLACK);
                     tft.drawString("ON", 60, 75, 2);
                 } else {
-                    // Dark Grey/Red power label
                     tft.fillCircle(60, 75, 18, TFT_DARKGREY);
                     tft.setTextColor(TFT_WHITE);
                     tft.drawString("OFF", 60, 75, 2);
@@ -247,21 +297,20 @@ namespace DisplayManager {
                 lastLampOn = lampOn;
             }
 
-            // Top-Right (UR) Quadrant: Color Picker Trigger & Display active color
+            // Top-Right (UR) Quadrant: Color Preview
             if (color != lastColor) {
                 tft.fillRect(125, 5, 110, 110, TFT_BLACK);
                 tft.setTextDatum(MC_DATUM);
                 tft.setTextColor(TFT_WHITE, TFT_BLACK);
                 tft.drawString("COLOR", 180, 35, 2);
 
-                // Draw color circle showing active color with a white border
                 tft.fillCircle(180, 75, 18, color);
                 tft.drawCircle(180, 75, 18, TFT_WHITE);
                 
                 lastColor = color;
             }
 
-            // Central HUD: Brightness indicator circle
+            // Central HUD: Brightness indicator
             if (brightness != lastBrightness) {
                 tft.fillCircle(120, 120, 22, TFT_BLACK);
                 tft.drawCircle(120, 120, 22, TFT_CYAN);
@@ -276,7 +325,7 @@ namespace DisplayManager {
             }
         }
 
-        // 4. Render Touch Indicator
+        // 4. Render active Touch Dot
         if (isTouched) {
             tft.fillCircle(x, y, 6, TFT_GREEN);
             lastDotX = x;
