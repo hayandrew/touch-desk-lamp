@@ -7,8 +7,12 @@ namespace DisplayManager {
     // Initialize display and turn on backlight
     void init();
 
-    // Redraw screen with latest touch information and state updates
-    void update(bool isTouched, int x, int y, const char* gestureName, const char* eventName);
+    // Redraw screen with latest touch information, lamp state, and overlay state
+    void update(bool isTouched, int x, int y, const char* gestureName, const char* eventName,
+                bool lampOn, int brightness, uint16_t color, int hue, bool colorPickerActive);
+
+    // Convert a hue value (0-359) to a 16-bit RGB565 color value
+    uint16_t hueToRGB565(int hue);
 
     // Draw full-screen OTA firmware update progress
     void drawOtaProgress(unsigned int progress, unsigned int total);

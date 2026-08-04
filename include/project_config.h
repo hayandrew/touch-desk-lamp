@@ -6,10 +6,10 @@
 // Screen Dimensions
 #define SCREEN_WIDTH  240
 #define SCREEN_HEIGHT 240
+#define SCREEN_CENTER_X 120
+#define SCREEN_CENTER_Y 120
 
 // Display (SPI) Pin Mappings
-// Note: SCLK/MOSI/CS/DC/RST/BL are configured in platformio.ini for TFT_eSPI
-// We list them here for logical reference.
 #define TFT_SCLK_PIN 10
 #define TFT_MOSI_PIN 9
 #define TFT_RST_PIN  8
@@ -35,5 +35,16 @@
 
 // Arduino OTA Settings
 #define OTA_PORT 3232
+
+// Lamp Settings
+#define DEFAULT_BRIGHTNESS 80
+#define BRIGHTNESS_STEP 10
+#define MIN_BRIGHTNESS 10
+#define MAX_BRIGHTNESS 100
+
+// Color Wheel Settings
+#define WHEEL_INNER_RADIUS 55
+#define WHEEL_OUTER_RADIUS 110
+#define CLOSE_BTN_RADIUS   25
 
 #endif // PROJECT_CONFIG_H

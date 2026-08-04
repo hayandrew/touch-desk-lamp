@@ -4,6 +4,17 @@
 #include "project_config.h"
 #include "display_manager.h"
 #include "touch_manager.h"
+#include <TFT_eSPI.h>
+
+// Lamp State Variables
+static bool lampOn = false;
+static int brightness = DEFAULT_BRIGHTNESS;
+static uint16_t activeColor = TFT_GOLD;
+static int activeHue = 45; // Start with gold/orange hue (approx 45 degrees)
+static bool colorPickerActive = false;
+
+// Touch State Caching
+static bool lastTouchedState = false;
 
 void setup() {
   // Initialize Serial Logging
@@ -94,13 +105,87 @@ void loop() {
   // Poll touch panel state
   TouchManager::update();
 
-  // Draw UI and check for actions
+  bool isTouched = TouchManager::isTouched();
+  if (isTouched) {
+    int tx = TouchManager::getX();
+    int ty = TouchManager::getY();
+    
+    // Calculate polar coordinates relative to screen center
+    int dx = tx - SCREEN_CENTER_X;
+    int dy = ty - SCREEN_CENTER_Y;
+    int dist_sq = dx * dx + dy * dy;
+
+    if (colorPickerActive) {
+      if (!lastTouchedState) {
+        // Tapped close button (X) in the center
+        if (dist_sq <= CLOSE_BTN_RADIUS * CLOSE_BTN_RADIUS) {
+          colorPickerActive = false;
+          Serial.println("[Main] Color Picker overlay closed.");
+          delay(150); // Small debounce
+        }
+      }
+      // Dragging/Tapping inside the Color Wheel Ring boundaries
+      if (dist_sq >= WHEEL_INNER_RADIUS * WHEEL_INNER_RADIUS && 
+          dist_sq <= WHEEL_OUTER_RADIUS * WHEEL_OUTER_RADIUS) {
+        float angle_deg = atan2(dy, dx) * RAD_TO_DEG;
+        if (angle_deg < 0) angle_deg += 360;
+        
+        activeHue = (int)angle_deg % 360;
+        activeColor = DisplayManager::hueToRGB565(activeHue);
+        
+        // Print color update to serial console
+        static unsigned long lastPrintTime = 0;
+        if (millis() - lastPrintTime >= 100) {
+          Serial.printf("[Main] Color drag: Hue=%d, RGB=0x%04X\n", activeHue, activeColor);
+          lastPrintTime = millis();
+        }
+      }
+    } else {
+      // Normal Quadrant Interactions
+      if (!lastTouchedState) {
+        if (tx < SCREEN_CENTER_X && ty < SCREEN_CENTER_Y) {
+          // Top-Left: Power Toggle
+          lampOn = !lampOn;
+          Serial.printf("[Main] Power Switch toggled: %s\n", lampOn ? "ON" : "OFF");
+        } 
+        else if (tx >= SCREEN_CENTER_X && ty < SCREEN_CENTER_Y) {
+          // Top-Right: Open Color Picker Overlay
+          colorPickerActive = true;
+          Serial.println("[Main] Opening Color Picker overlay...");
+        } 
+        else if (tx < SCREEN_CENTER_X && ty >= SCREEN_CENTER_Y) {
+          // Bottom-Left: Brightness Down (-)
+          if (brightness > MIN_BRIGHTNESS) {
+            brightness -= BRIGHTNESS_STEP;
+            Serial.printf("[Main] Brightness decreased: %d%%\n", brightness);
+          }
+        } 
+        else if (tx >= SCREEN_CENTER_X && ty >= SCREEN_CENTER_Y) {
+          // Bottom-Right: Brightness Up (+)
+          if (brightness < MAX_BRIGHTNESS) {
+            brightness += BRIGHTNESS_STEP;
+            Serial.printf("[Main] Brightness increased: %d%%\n", brightness);
+          }
+        }
+        delay(150); // Small debounce to prevent accidental double-clicks
+      }
+    }
+  }
+  
+  lastTouchedState = isTouched;
+
+  // Draw updated states
   DisplayManager::update(
-    TouchManager::isTouched(),
+    isTouched,
     TouchManager::getX(),
     TouchManager::getY(),
     TouchManager::getGestureName(),
-    TouchManager::getEventName()
+    TouchManager::getEventName(),
+    lampOn,
+    brightness,
+    activeColor,
+    activeHue,
+    colorPickerActive
   );
 
   // Yield to keep the ESP32 Wi-Fi stack happy
