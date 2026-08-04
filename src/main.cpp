@@ -9,8 +9,8 @@
 // Lamp State Variables
 static bool lampOn = false;
 static int brightness = DEFAULT_BRIGHTNESS;
-static uint16_t activeColor = 0xFD20; // Default to Orange (approx same as TFT_GOLD)
-static int activeSegmentIndex = 4;    // Default to segment 4 (Orange)
+static uint16_t activeColor = 0xFF34; // Default to Warm White (RGB 255, 230, 160)
+static int activeSegmentIndex = 1;    // Default to Warm White segment (index 1)
 static bool colorPickerActive = false;
 
 // Touch State Caching

@@ -108,27 +108,35 @@ namespace DisplayManager {
     void drawStaticQuadrants() {
         tft.fillScreen(TFT_BLACK);
         
+        // Bottom-Left (LL): Bright -
+        // Solid dark grey background
+        uint16_t bg_ll = tft.color565(50, 50, 50);
+        tft.fillRect(0, 121, 119, 119, bg_ll);
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(TFT_WHITE, bg_ll);
+        tft.setTextSize(2); // Scale font twice as large
+        tft.drawString("-", 70, 170, 4); // Offset +10 (70, 170)
+        tft.setTextSize(1); // Reset scale
+
+        // Bottom-Right (LR): Bright +
+        // Solid light grey background
+        uint16_t bg_lr = tft.color565(160, 160, 160);
+        tft.fillRect(121, 121, 119, 119, bg_lr);
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(TFT_BLACK, bg_lr); // High-contrast black "+" on light grey
+        tft.setTextSize(2); // Scale font twice as large
+        tft.drawString("+", 170, 170, 4); // Offset +10 (170, 170)
+        tft.setTextSize(1); // Reset scale
+
+        // Draw 2-pixel black divider lines
+        tft.drawFastVLine(119, 0, 240, TFT_BLACK);
+        tft.drawFastVLine(120, 0, 240, TFT_BLACK);
+        tft.drawFastHLine(0, 119, 240, TFT_BLACK);
+        tft.drawFastHLine(0, 120, 240, TFT_BLACK);
+
         // Draw outer boundary
         tft.drawCircle(120, 120, 119, TFT_WHITE);
         tft.drawCircle(120, 120, 118, TFT_DARKGREY);
-
-        // Draw quadrant divider crosshair (grey)
-        tft.drawLine(120, 0, 120, 240, TFT_DARKGREY);
-        tft.drawLine(0, 120, 240, 120, TFT_DARKGREY);
-
-        tft.setTextDatum(MC_DATUM);
-
-        // Bottom-Left: Brightness Down
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        tft.drawString("BRIGHT -", 60, 150, 2);
-        tft.setTextColor(TFT_CYAN, TFT_BLACK);
-        tft.drawString("-", 60, 185, 4);
-
-        // Bottom-Right: Brightness Up
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        tft.drawString("BRIGHT +", 180, 150, 2);
-        tft.setTextColor(TFT_CYAN, TFT_BLACK);
-        tft.drawString("+", 180, 185, 4);
     }
 
     void drawStaticColorPicker() {
@@ -217,18 +225,16 @@ namespace DisplayManager {
         // 2. Erase previous touch tracking dot
         if (lastTouched && (!isTouched || x != lastDotX || y != lastDotY)) {
             if (lastDotX != -1 && lastDotY != -1) {
-                tft.fillCircle(lastDotX, lastDotY, 6, TFT_BLACK);
-                
                 int dist_ctr_sq = (lastDotX - 120)*(lastDotX - 120) + (lastDotY - 120)*(lastDotY - 120);
                 
                 if (colorPickerActive) {
+                    tft.fillCircle(lastDotX, lastDotY, 6, TFT_BLACK);
                     if (dist_ctr_sq <= (CLOSE_BTN_RADIUS+8)*(CLOSE_BTN_RADIUS+8)) {
                         // Repatch center checkmark
                         tft.fillCircle(120, 120, CLOSE_BTN_RADIUS, color);
                         tft.drawCircle(120, 120, CLOSE_BTN_RADIUS, TFT_WHITE);
                         drawCheckmark(120, 120, color);
-                    } else if (dist_ctr_sq >= (WHEEL_INNER_RADIUS-8)*(WHEEL_INNER_RADIUS-8) && 
-                               dist_ctr_sq <= (WHEEL_OUTER_RADIUS+8)*(WHEEL_OUTER_RADIUS+8)) {
+                    } else if (dist_ctr_sq <= (WHEEL_OUTER_RADIUS+8)*(WHEEL_OUTER_RADIUS+8)) {
                         // Repatch affected wedges
                         float touch_angle = atan2(lastDotY - 120, lastDotX - 120) * RAD_TO_DEG;
                         if (touch_angle < 0) touch_angle += 360;
@@ -240,20 +246,32 @@ namespace DisplayManager {
                         }
                     }
                 } else {
-                    if (dist_ctr_sq <= 30*30) {
-                        lastBrightness = -1; // Force center HUD redraw
+                    // Erase touch dot in quadrant mode by triggering full redraw of the touched quadrant
+                    if (lastDotX < 120 && lastDotY < 120) {
+                        lastLampOn = !lampOn; // Force redraw of UL (Power)
+                    } else if (lastDotX >= 120 && lastDotY < 120) {
+                        lastColor = 0; // Force redraw of UR (Color preview)
+                    } else if (lastDotX < 120 && lastDotY >= 120) {
+                        // Redraw LL (Bright -)
+                        uint16_t bg = tft.color565(50, 50, 50);
+                        tft.fillRect(0, 121, 119, 119, bg);
+                        tft.setTextDatum(MC_DATUM);
+                        tft.setTextColor(TFT_WHITE, bg);
+                        tft.setTextSize(2);
+                        tft.drawString("-", 70, 170, 4);
+                        tft.setTextSize(1);
+                        lastBrightness = -1; // Restore dividers and HUD
+                    } else {
+                        // Redraw LR (Bright +)
+                        uint16_t bg = tft.color565(160, 160, 160);
+                        tft.fillRect(121, 121, 119, 119, bg);
+                        tft.setTextDatum(MC_DATUM);
+                        tft.setTextColor(TFT_BLACK, bg);
+                        tft.setTextSize(2);
+                        tft.drawString("+", 170, 170, 4);
+                        tft.setTextSize(1);
+                        lastBrightness = -1; // Restore dividers and HUD
                     }
-                    if (abs(lastDotX - 120) <= 8) {
-                        tft.drawLine(120, 0, 120, 240, TFT_DARKGREY);
-                    }
-                    if (abs(lastDotY - 120) <= 8) {
-                        tft.drawLine(0, 120, 240, 120, TFT_DARKGREY);
-                    }
-                }
-
-                if (dist_ctr_sq >= 110*110) {
-                    tft.drawCircle(120, 120, 119, TFT_WHITE);
-                    tft.drawCircle(120, 120, 118, TFT_DARKGREY);
                 }
             }
         }
@@ -280,46 +298,42 @@ namespace DisplayManager {
         } else {
             // Top-Left (UL) Quadrant: Power Switch
             if (lampOn != lastLampOn) {
-                tft.fillRect(5, 5, 110, 110, TFT_BLACK);
+                uint16_t bg = lampOn ? TFT_WHITE : tft.color565(80, 80, 80);
+                tft.fillRect(0, 0, 119, 119, bg);
                 tft.setTextDatum(MC_DATUM);
-                tft.setTextColor(TFT_WHITE, TFT_BLACK);
-                tft.drawString("POWER", 60, 35, 2);
-
-                if (lampOn) {
-                    tft.fillCircle(60, 75, 18, TFT_GREEN);
-                    tft.setTextColor(TFT_BLACK);
-                    tft.drawString("ON", 60, 75, 2);
-                } else {
-                    tft.fillCircle(60, 75, 18, TFT_DARKGREY);
-                    tft.setTextColor(TFT_WHITE);
-                    tft.drawString("OFF", 60, 75, 2);
-                }
+                tft.setTextColor(lampOn ? TFT_BLACK : TFT_WHITE, bg);
+                tft.drawString(lampOn ? "ON" : "OFF", 70, 70, 4); // Offset at (70, 70)
+                
                 lastLampOn = lampOn;
+                lastBrightness = -1; // Force HUD redraw on top
             }
 
-            // Top-Right (UR) Quadrant: Color Preview
+            // Top-Right (UR) Quadrant: Color Preview Block
             if (color != lastColor) {
-                tft.fillRect(125, 5, 110, 110, TFT_BLACK);
-                tft.setTextDatum(MC_DATUM);
-                tft.setTextColor(TFT_WHITE, TFT_BLACK);
-                tft.drawString("COLOR", 180, 35, 2);
-
-                tft.fillCircle(180, 75, 18, color);
-                tft.drawCircle(180, 75, 18, TFT_WHITE);
+                tft.fillRect(121, 0, 119, 119, color);
                 
                 lastColor = color;
+                lastBrightness = -1; // Force HUD redraw on top
             }
 
             // Central HUD: Brightness indicator
             if (brightness != lastBrightness) {
-                tft.fillCircle(120, 120, 22, TFT_BLACK);
-                tft.drawCircle(120, 120, 22, TFT_CYAN);
+                // Redraw outer borders & dividers to keep them clean
+                tft.drawCircle(120, 120, 119, TFT_WHITE);
+                tft.drawCircle(120, 120, 118, TFT_DARKGREY);
+                tft.drawFastVLine(119, 0, 240, TFT_BLACK);
+                tft.drawFastVLine(120, 0, 240, TFT_BLACK);
+                tft.drawFastHLine(0, 119, 240, TFT_BLACK);
+                tft.drawFastHLine(0, 120, 240, TFT_BLACK);
+
+                tft.fillCircle(120, 120, 28, TFT_BLACK);
+                tft.drawCircle(120, 120, 28, TFT_BLACK);
                 tft.setTextDatum(MC_DATUM);
-                tft.setTextColor(TFT_CYAN, TFT_BLACK);
+                tft.setTextColor(tft.color565(200, 200, 200), TFT_BLACK);
                 
                 char brBuf[8];
                 snprintf(brBuf, sizeof(brBuf), "%d%%", brightness);
-                tft.drawString(brBuf, 120, 120, 1);
+                tft.drawString(brBuf, 120, 120, 4); // Larger Font (Size 4)
                 
                 lastBrightness = brightness;
             }
