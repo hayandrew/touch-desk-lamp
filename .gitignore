@@ -1,0 +1,13 @@
+# PlatformIO Build Cache
+.pio/
+
+# Local Environment Variables (contains Wi-Fi credentials)
+.env
+
+# Editor & LSP Files
+.vscode/
+.clangd
+
+# OS generated files
+.DS_Store
+Thumbs.db
