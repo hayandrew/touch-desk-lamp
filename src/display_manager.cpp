@@ -74,8 +74,8 @@ namespace DisplayManager {
         float angle = (segmentIndex * 36 + 17) * DEG_TO_RAD;
         float ca = cos(angle);
         float sa = sin(angle);
-        int mx = 120 + 82.5f * ca; // Centered radially in the ring
-        int my = 120 + 82.5f * sa;
+        int mx = 120 + 75.0f * ca; // Centered between close button (25) and outer radius (110)
+        int my = 120 + 75.0f * sa;
         
         tft.fillCircle(mx, my, 5, TFT_WHITE);
         tft.fillCircle(mx, my, 3, TFT_BLACK);
@@ -87,14 +87,22 @@ namespace DisplayManager {
         int end_angle = (segmentIndex + 1) * 36 - 2;
         uint16_t col = segmentColors[segmentIndex];
         
-        for (float h = start_angle; h <= end_angle; h += 0.2f) {
-            float angle = h * DEG_TO_RAD;
-            float ca = cos(angle);
-            float sa = sin(angle);
-            tft.drawLine(120 + WHEEL_INNER_RADIUS * ca, 120 + WHEEL_INNER_RADIUS * sa,
-                         120 + WHEEL_OUTER_RADIUS * ca, 120 + WHEEL_OUTER_RADIUS * sa,
-                         col);
+        for (int h = start_angle; h < end_angle; h++) {
+            float angle1 = h * DEG_TO_RAD;
+            float angle2 = (h + 1) * DEG_TO_RAD;
+            
+            int x1 = 120 + WHEEL_OUTER_RADIUS * cos(angle1);
+            int y1 = 120 + WHEEL_OUTER_RADIUS * sin(angle1);
+            int x2 = 120 + WHEEL_OUTER_RADIUS * cos(angle2);
+            int y2 = 120 + WHEEL_OUTER_RADIUS * sin(angle2);
+            
+            tft.fillTriangle(120, 120, x1, y1, x2, y2, col);
         }
+
+        // Redraw center checkmark button since the triangles cover it
+        tft.fillCircle(120, 120, CLOSE_BTN_RADIUS, lastColor);
+        tft.drawCircle(120, 120, CLOSE_BTN_RADIUS, TFT_WHITE);
+        drawCheckmark(120, 120, lastColor);
     }
 
     void drawStaticQuadrants() {
@@ -130,24 +138,22 @@ namespace DisplayManager {
         tft.drawCircle(120, 120, 119, TFT_WHITE);
         tft.drawCircle(120, 120, 118, TFT_DARKGREY);
 
-        // Draw selection title
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        tft.drawString("SELECT COLOR", 120, 25, 2);
-
-        // Draw 10 discrete color wedges with 2-degree gaps
+        // Draw 10 discrete color wedges with 2-degree gaps radiating from center
         for (int i = 0; i < 10; i++) {
             int start_angle = i * 36;
             int end_angle = (i + 1) * 36 - 2;
             uint16_t col = segmentColors[i];
             
-            for (float h = start_angle; h <= end_angle; h += 0.2f) {
-                float angle = h * DEG_TO_RAD;
-                float ca = cos(angle);
-                float sa = sin(angle);
-                tft.drawLine(120 + WHEEL_INNER_RADIUS * ca, 120 + WHEEL_INNER_RADIUS * sa,
-                             120 + WHEEL_OUTER_RADIUS * ca, 120 + WHEEL_OUTER_RADIUS * sa,
-                             col);
+            for (int h = start_angle; h < end_angle; h++) {
+                float angle1 = h * DEG_TO_RAD;
+                float angle2 = (h + 1) * DEG_TO_RAD;
+                
+                int x1 = 120 + WHEEL_OUTER_RADIUS * cos(angle1);
+                int y1 = 120 + WHEEL_OUTER_RADIUS * sin(angle1);
+                int x2 = 120 + WHEEL_OUTER_RADIUS * cos(angle2);
+                int y2 = 120 + WHEEL_OUTER_RADIUS * sin(angle2);
+                
+                tft.fillTriangle(120, 120, x1, y1, x2, y2, col);
             }
         }
     }
@@ -223,7 +229,7 @@ namespace DisplayManager {
                         drawCheckmark(120, 120, color);
                     } else if (dist_ctr_sq >= (WHEEL_INNER_RADIUS-8)*(WHEEL_INNER_RADIUS-8) && 
                                dist_ctr_sq <= (WHEEL_OUTER_RADIUS+8)*(WHEEL_OUTER_RADIUS+8)) {
-                        // Repatch touched segment(s)
+                        // Repatch affected wedges
                         float touch_angle = atan2(lastDotY - 120, lastDotX - 120) * RAD_TO_DEG;
                         if (touch_angle < 0) touch_angle += 360;
                         int segIndex = (int)(touch_angle) / 36;
@@ -268,12 +274,6 @@ namespace DisplayManager {
                 tft.fillCircle(120, 120, CLOSE_BTN_RADIUS, color);
                 tft.drawCircle(120, 120, CLOSE_BTN_RADIUS, TFT_WHITE);
                 drawCheckmark(120, 120, color);
-                
-                // Clear selection title and write active color name
-                tft.fillRect(35, 10, 170, 25, TFT_BLACK);
-                tft.setTextDatum(MC_DATUM);
-                tft.setTextColor(color, TFT_BLACK);
-                tft.drawString(segmentNames[activeSegmentIndex], 120, 25, 2);
                 
                 lastColor = color;
             }

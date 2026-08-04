@@ -125,7 +125,7 @@ void loop() {
         }
       }
       // Dragging/Tapping inside the Color Ring boundaries
-      if (dist_sq >= WHEEL_INNER_RADIUS * WHEEL_INNER_RADIUS && 
+      if (dist_sq >= CLOSE_BTN_RADIUS * CLOSE_BTN_RADIUS && 
           dist_sq <= WHEEL_OUTER_RADIUS * WHEEL_OUTER_RADIUS) {
         float angle_deg = atan2(dy, dx) * RAD_TO_DEG;
         if (angle_deg < 0) angle_deg += 360;
