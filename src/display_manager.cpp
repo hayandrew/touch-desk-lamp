@@ -289,22 +289,26 @@ namespace DisplayManager {
             tft.drawCircle(120, 120, 118, TFT_DARKGREY);
             tft.setTextDatum(MC_DATUM);
             tft.setTextColor(TFT_WHITE, TFT_BLACK);
-            tft.drawString("FIRMWARE UPDATE", 120, 80, 2);
+            tft.drawString("OTA Update", 120, 60, 4); // Large Title
+            tft.setTextColor(TFT_RED, TFT_BLACK);
+            tft.drawString("Do not turn off power", 120, 95, 2); // Caution Subtitle
         }
 
         int percentage = (progress * 100) / total;
         char progressBuf[32];
-        snprintf(progressBuf, sizeof(progressBuf), "Updating: %d%% ", percentage);
+        snprintf(progressBuf, sizeof(progressBuf), "Updating: %d%%", percentage);
+        tft.setTextDatum(MC_DATUM);
         tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-        tft.drawString(progressBuf, 120, 120, 4);
+        tft.drawString(progressBuf, 120, 135, 2);
 
-        int barWidth = 140;
-        int barHeight = 12;
+        int barWidth = 160;
+        int barHeight = 16;
         int barX = 120 - barWidth / 2;
-        int barY = 150;
+        int barY = 165;
         tft.drawRect(barX, barY, barWidth, barHeight, TFT_WHITE);
         int fillWidth = (percentage * (barWidth - 4)) / 100;
         tft.fillRect(barX + 2, barY + 2, fillWidth, barHeight - 4, TFT_GREEN);
+        tft.fillRect(barX + 2 + fillWidth, barY + 2, (barWidth - 4) - fillWidth, barHeight - 4, TFT_BLACK);
     }
 
     void drawOtaError(const char* errorMsg) {

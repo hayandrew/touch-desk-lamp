@@ -24,8 +24,13 @@ if exists(env_file):
                     os.environ[key] = val
 
 # Inject env variables as C++ Preprocessor Macros
-for key in ["WIFI_SSID", "WIFI_PASS"]:
+for key in ["WIFI_SSID", "WIFI_PASS", "MQTT_HOST", "MQTT_USER", "MQTT_PASS"]:
     if key in os.environ:
         env.Append(CPPDEFINES=[(key, env.StringifyMacro(os.environ[key]))])
     else:
         print(f"--- load_env.py WARNING: {key} not found in environment or .env file ---")
+
+if "MQTT_PORT" in os.environ:
+    env.Append(CPPDEFINES=[("MQTT_PORT", os.environ["MQTT_PORT"])])
+else:
+    print("--- load_env.py WARNING: MQTT_PORT not found in environment or .env file ---")

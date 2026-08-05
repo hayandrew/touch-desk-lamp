@@ -6,12 +6,14 @@
 #include "touch_manager.h"
 #include <TFT_eSPI.h>
 
+#include "mqtt_manager.h"
+
 // Lamp State Variables
-static bool lampOn = false;
-static int brightness = DEFAULT_BRIGHTNESS;
-static uint16_t activeColor = 0xFF34; // Default to Warm White (RGB 255, 230, 160)
-static int activeSegmentIndex = 1;    // Default to Warm White segment (index 1)
-static bool colorPickerActive = false;
+bool lampOn = false;
+int brightness = DEFAULT_BRIGHTNESS;
+uint16_t activeColor = 0xFF34; // Default to Warm White (RGB 255, 230, 160)
+int activeSegmentIndex = 1;    // Default to Warm White segment (index 1)
+bool colorPickerActive = false;
 
 // Touch State Caching
 static bool lastTouchedState = false;
@@ -100,6 +102,7 @@ void setup() {
 
   ArduinoOTA.begin();
   Serial.println("[OTA] OTA Services Ready.");
+  MQTTManager::init();
   lastInteractionTime = millis();
   Serial.println("=== Setup Complete. Entering loop ===\n");
 }
@@ -107,6 +110,9 @@ void setup() {
 void loop() {
   // Process OTA requests
   ArduinoOTA.handle();
+
+  // Process MQTT messages and maintain connection
+  MQTTManager::update();
 
   // Poll touch panel state
   TouchManager::update();
@@ -224,6 +230,11 @@ void loop() {
         delay(150); // Small debounce to prevent accidental double-clicks
       }
     }
+  }
+  
+  // Broadcast local state updates to Home Assistant when user releases touch
+  if (lastTouchedState && !isTouched && !displaySleeping && !ignoreUntilRelease) {
+    MQTTManager::publishState();
   }
   
   lastTouchedState = isTouched;
