@@ -16,6 +16,11 @@ static bool colorPickerActive = false;
 // Touch State Caching
 static bool lastTouchedState = false;
 
+// Sleep and Inactivity Tracking
+static bool displaySleeping = false;
+static bool ignoreUntilRelease = false;
+static unsigned long lastInteractionTime = 0;
+
 void setup() {
   // Initialize Serial Logging
   Serial.begin(115200);
@@ -95,6 +100,7 @@ void setup() {
 
   ArduinoOTA.begin();
   Serial.println("[OTA] OTA Services Ready.");
+  lastInteractionTime = millis();
   Serial.println("=== Setup Complete. Entering loop ===\n");
 }
 
@@ -106,7 +112,54 @@ void loop() {
   TouchManager::update();
 
   bool isTouched = TouchManager::isTouched();
+
+  // Inactivity / Sleep state machine logic
   if (isTouched) {
+    lastInteractionTime = millis();
+    
+    if (displaySleeping) {
+      displaySleeping = false;
+      ignoreUntilRelease = true;
+      
+      // Wake up the backlight
+      pinMode(TFT_BLK_PIN, OUTPUT);
+      digitalWrite(TFT_BLK_PIN, HIGH);
+      Serial.println("[Main] Display woken up by touch. Ignoring initial press coordinates.");
+      
+      delay(150); // Small debounce
+    }
+  } else {
+    // Clear ignore flag when user lifts their finger
+    ignoreUntilRelease = false;
+  }
+
+  // Check for inactivity timeout (30 seconds)
+  if (!displaySleeping && (millis() - lastInteractionTime > 30000)) {
+    // If the color picker is active, close it first
+    if (colorPickerActive) {
+      colorPickerActive = false;
+      Serial.println("[Main] Inactivity timeout: Closing Color Picker.");
+    }
+    
+    // Draw the final state (clean quadrants screen) before screen goes black
+    DisplayManager::update(
+      lampOn,
+      brightness,
+      activeColor,
+      activeSegmentIndex,
+      colorPickerActive
+    );
+    
+    // Put display backlight to sleep
+    pinMode(TFT_BLK_PIN, OUTPUT);
+    digitalWrite(TFT_BLK_PIN, LOW);
+    Serial.println("[Main] Inactivity timeout: Putting display to sleep.");
+    
+    displaySleeping = true;
+  }
+
+  // Process UI touches only if display is awake and we are not ignoring the waking touch
+  if (isTouched && !displaySleeping && !ignoreUntilRelease) {
     int tx = TouchManager::getX();
     int ty = TouchManager::getY();
     
@@ -175,14 +228,16 @@ void loop() {
   
   lastTouchedState = isTouched;
 
-  // Draw updated states
-  DisplayManager::update(
-    lampOn,
-    brightness,
-    activeColor,
-    activeSegmentIndex,
-    colorPickerActive
-  );
+  // Redraw the screen only when the display is active/awake
+  if (!displaySleeping) {
+    DisplayManager::update(
+      lampOn,
+      brightness,
+      activeColor,
+      activeSegmentIndex,
+      colorPickerActive
+    );
+  }
 
   // Yield to keep the ESP32 Wi-Fi stack happy
   delay(10);
