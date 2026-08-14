@@ -24,7 +24,7 @@
 #define TOUCH_INT_PIN 1
 
 // Wi-Fi Configuration
-#define WIFI_HOSTNAME "esp32c3-touch-lamp"
+#define WIFI_HOSTNAME "home-remote"
 
 // Network Configuration (Static IP Setup for OTA)
 #define STATIC_IP_ADDR  192, 168, 68, 51

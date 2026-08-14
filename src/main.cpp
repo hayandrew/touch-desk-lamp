@@ -27,7 +27,7 @@ void setup() {
   // Initialize Serial Logging
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n=== Touch Desk Lamp Starting ===");
+  Serial.println("\n=== Home Remote Starting ===");
 
   // Initialize display first so we can draw boot logs
   DisplayManager::init();

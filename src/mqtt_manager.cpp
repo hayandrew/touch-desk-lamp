@@ -53,9 +53,9 @@ namespace MQTTManager {
     static unsigned long lastReconnectAttempt = 0;
     
     // Home Assistant MQTT Light Topics
-    static const char* discoveryTopic = "homeassistant/light/desk_lamp/config";
-    static const char* stateTopic     = "homeassistant/light/desk_lamp/state";
-    static const char* setTopic       = "homeassistant/light/desk_lamp/set";
+    static const char* discoveryTopic = "homeassistant/light/home_remote/config";
+    static const char* stateTopic     = "homeassistant/light/home_remote/state";
+    static const char* setTopic       = "homeassistant/light/home_remote/set";
 
     // Helper: Finds which of our 10 segments is closest to the target RGB color
     int findClosestSegment(uint8_t r, uint8_t g, uint8_t b) {
@@ -133,7 +133,7 @@ namespace MQTTManager {
     // Connects to the MQTT broker and registers auto-discovery
     bool connect() {
         Serial.printf("[MQTT] Connecting to broker %s:%d...\n", MQTT_HOST, MQTT_PORT);
-        String clientId = "esp32c3_lamp_" + String(random(0xffff), HEX);
+        String clientId = "home_remote_" + String(random(0xffff), HEX);
         
         bool success = false;
         if (strlen(MQTT_USER) > 0) {
@@ -147,8 +147,8 @@ namespace MQTTManager {
             
             // Publish MQTT discovery payload to auto-register with Home Assistant
             StaticJsonDocument<512> doc;
-            doc["name"] = "Desk Lamp Touch";
-            doc["unique_id"] = "esp32c3_touch_lamp_1";
+            doc["name"] = "Home Remote";
+            doc["unique_id"] = "home_remote_1";
             doc["state_topic"] = stateTopic;
             doc["command_topic"] = setTopic;
             doc["schema"] = "json";
