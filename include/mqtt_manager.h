@@ -10,6 +10,12 @@ namespace MQTTManager {
     // Maintain non-blocking MQTT connection and handle loop polling
     void update();
 
+    // Attempt to connect to the MQTT broker
+    bool connect();
+
+    // Check if the client is connected to the broker
+    bool isConnected();
+
     // Publish the current global lamp state to Home Assistant
     void publishState();
 }

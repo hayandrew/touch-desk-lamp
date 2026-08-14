@@ -27,9 +27,18 @@ void setup() {
   // Initialize Serial Logging
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n=== ESP32-C3 Touch Lamp Starting ===");
+  Serial.println("\n=== Touch Desk Lamp Starting ===");
+
+  // Initialize display first so we can draw boot logs
+  DisplayManager::init();
+  DisplayManager::addBootLogLine("Display Initialized.", TFT_GREEN);
+
+  // Initialize touch manager
+  TouchManager::init();
+  DisplayManager::addBootLogLine("Touch Initialized.", TFT_GREEN);
 
   // Connect to Wi-Fi using static IP settings
+  DisplayManager::addBootLogLine("Connecting to WiFi...", TFT_WHITE);
   WiFi.mode(WIFI_STA);
   IPAddress local_IP(STATIC_IP_ADDR);
   IPAddress gateway(GATEWAY_IP_ADDR);
@@ -49,25 +58,57 @@ void setup() {
     #error "WIFI_SSID and WIFI_PASS must be defined in .env!"
   #endif
 
-  // Wait for Wi-Fi connection with timeout (10 seconds)
-  int retries = 0;
-  while (WiFi.status() != WL_CONNECTED && retries < 20) {
-    delay(500);
-    Serial.print(".");
-    retries++;
+  // Wait for Wi-Fi connection with 10-second timeout, retrying every 2 seconds
+  unsigned long wifiStart = millis();
+  bool wifiConnected = false;
+  while (millis() - wifiStart < 10000) {
+    if (WiFi.status() == WL_CONNECTED) {
+      wifiConnected = true;
+      break;
+    }
+    Serial.print("[WiFi] Connecting...\n");
+    DisplayManager::addBootLogLine("WiFi: Connecting...", TFT_YELLOW);
+    delay(2000);
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[WiFi] Connected successfully!");
+  if (wifiConnected) {
+    Serial.println("[WiFi] Connected successfully!");
     Serial.print("[WiFi] IP Address: ");
     Serial.println(WiFi.localIP());
+    char wifiBuf[64];
+    snprintf(wifiBuf, sizeof(wifiBuf), "WiFi: OK (%s)", WiFi.localIP().toString().c_str());
+    DisplayManager::addBootLogLine(wifiBuf, TFT_GREEN);
   } else {
-    Serial.println("\n[WiFi] Wi-Fi connection timed out! Running offline.");
+    Serial.println("[WiFi] Connection timed out!");
+    DisplayManager::addBootLogLine("WiFi: No Connection", TFT_RED);
   }
 
-  // Initialize display and touch managers
-  DisplayManager::init();
-  TouchManager::init();
+  // Configure MQTT/diyHue
+  MQTTManager::init();
+
+  // Connect to diyHue (MQTT) with 10-second timeout, retrying every 2 seconds
+  if (WiFi.status() == WL_CONNECTED) {
+    DisplayManager::addBootLogLine("Connecting to diyHue...", TFT_WHITE);
+    unsigned long mqttStart = millis();
+    bool mqttConnected = false;
+    while (millis() - mqttStart < 10000) {
+      if (MQTTManager::connect()) {
+        mqttConnected = true;
+        break;
+      }
+      Serial.print("[MQTT] Connecting...\n");
+      DisplayManager::addBootLogLine("diyHue: Retrying...", TFT_YELLOW);
+      delay(2000);
+    }
+
+    if (mqttConnected) {
+      DisplayManager::addBootLogLine("diyHue: Connected!", TFT_GREEN);
+    } else {
+      DisplayManager::addBootLogLine("diyHue: No Connection", TFT_RED);
+    }
+  } else {
+    DisplayManager::addBootLogLine("diyHue: No WiFi, skipped", TFT_RED);
+  }
 
   // Configure ArduinoOTA
   ArduinoOTA.setPort(OTA_PORT);
@@ -101,8 +142,11 @@ void setup() {
   });
 
   ArduinoOTA.begin();
-  Serial.println("[OTA] OTA Services Ready.");
-  MQTTManager::init();
+  DisplayManager::addBootLogLine("OTA Services Ready.", TFT_GREEN);
+
+  DisplayManager::addBootLogLine("Boot Complete!", TFT_GREEN);
+  delay(1500); // Give the user time to read the final screen status before main loop
+
   lastInteractionTime = millis();
   Serial.println("=== Setup Complete. Entering loop ===\n");
 }

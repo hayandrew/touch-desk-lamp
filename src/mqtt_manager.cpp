@@ -199,6 +199,10 @@ namespace MQTTManager {
         }
     }
 
+    bool isConnected() {
+        return client.connected();
+    }
+
     void publishState() {
         if (!client.connected()) return;
         

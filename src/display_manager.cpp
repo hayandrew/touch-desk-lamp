@@ -5,6 +5,7 @@
 
 namespace DisplayManager {
     static TFT_eSPI tft = TFT_eSPI();
+    static TFT_eSprite spr = TFT_eSprite(&tft);
     
     // Segmented Colors Initialization
     static uint16_t segmentColors[10];
@@ -12,16 +13,7 @@ namespace DisplayManager {
         "Cold White", "Warm White", "Red", "Pink", "Orange",
         "Yellow", "Green", "Blue", "Indigo", "Violet"
     };
-    
-    // UI State Caching
-    static bool lastColorPickerActive = true;
-    static bool lastLampOn = false;
-    static int lastBrightness = -1;
-    static uint16_t lastColor = 0;
-    static int lastSegmentIndex = -1;
 
-
-    // Helper: Hue to RGB565 (kept for fallback compatibility if needed, but not primary)
     uint16_t hueToRGB565(int hue) {
         hue = (hue % 360 + 360) % 360;
         float h = hue / 60.0;
@@ -44,106 +36,71 @@ namespace DisplayManager {
         return segmentColors[segmentIndex];
     }
 
-    // Draw checkmark symbol inside the center button with high-contrast luminance logic
     void drawCheckmark(int cx, int cy, uint16_t color) {
-        // Extract RGB component weights to calculate relative luminance
         uint8_t r = ((color >> 11) & 0x1F) * 255 / 31;
         uint8_t g = ((color >> 5) & 0x3F) * 255 / 63;
         uint8_t b = (color & 0x1F) * 255 / 31;
         float luminance = 0.299f * r + 0.587f * g + 0.114f * b;
         
-        // Use black checkmark for light background, white for dark background
         uint16_t chkColor = (luminance > 140.0f) ? TFT_BLACK : TFT_WHITE;
         
-        // Draw ✓ symbol vector path (bold)
-        tft.drawLine(cx - 8, cy, cx - 2, cy + 6, chkColor);
-        tft.drawLine(cx - 8, cy + 1, cx - 2, cy + 7, chkColor);
-        tft.drawLine(cx - 8, cy - 1, cx - 2, cy + 5, chkColor);
+        spr.drawLine(cx - 8, cy, cx - 2, cy + 6, chkColor);
+        spr.drawLine(cx - 8, cy + 1, cx - 2, cy + 7, chkColor);
+        spr.drawLine(cx - 8, cy - 1, cx - 2, cy + 5, chkColor);
         
-        tft.drawLine(cx - 2, cy + 6, cx + 10, cy - 6, chkColor);
-        tft.drawLine(cx - 2, cy + 7, cx + 10, cy - 5, chkColor);
-        tft.drawLine(cx - 2, cy + 5, cx + 10, cy - 7, chkColor);
+        spr.drawLine(cx - 2, cy + 6, cx + 10, cy - 6, chkColor);
+        spr.drawLine(cx - 2, cy + 7, cx + 10, cy - 5, chkColor);
+        spr.drawLine(cx - 2, cy + 5, cx + 10, cy - 7, chkColor);
     }
 
     void drawSegmentIndicator(int segmentIndex) {
         if (segmentIndex < 0 || segmentIndex >= 10) return;
-        // Midpoint angle of the segment (wedge width is 34 degrees plus 2 degrees gap)
         float angle = (segmentIndex * 36 + 17) * DEG_TO_RAD;
         float ca = cos(angle);
         float sa = sin(angle);
-        int mx = 120 + 75.0f * ca; // Centered between close button (25) and outer radius (110)
+        int mx = 120 + 75.0f * ca;
         int my = 120 + 75.0f * sa;
         
-        tft.fillCircle(mx, my, 5, TFT_WHITE);
-        tft.fillCircle(mx, my, 3, TFT_BLACK);
-    }
-
-    void eraseSegmentIndicator(int segmentIndex) {
-        if (segmentIndex < 0 || segmentIndex >= 10) return;
-        int start_angle = segmentIndex * 36;
-        int end_angle = (segmentIndex + 1) * 36 - 2;
-        uint16_t col = segmentColors[segmentIndex];
-        
-        for (int h = start_angle; h < end_angle; h++) {
-            float angle1 = h * DEG_TO_RAD;
-            float angle2 = (h + 1) * DEG_TO_RAD;
-            
-            int x1 = 120 + WHEEL_OUTER_RADIUS * cos(angle1);
-            int y1 = 120 + WHEEL_OUTER_RADIUS * sin(angle1);
-            int x2 = 120 + WHEEL_OUTER_RADIUS * cos(angle2);
-            int y2 = 120 + WHEEL_OUTER_RADIUS * sin(angle2);
-            
-            tft.fillTriangle(120, 120, x1, y1, x2, y2, col);
-        }
-
-        // Redraw center checkmark button since the triangles cover it
-        tft.fillCircle(120, 120, CLOSE_BTN_RADIUS, lastColor);
-        tft.drawCircle(120, 120, CLOSE_BTN_RADIUS, TFT_WHITE);
-        drawCheckmark(120, 120, lastColor);
+        spr.fillCircle(mx, my, 5, TFT_WHITE);
+        spr.fillCircle(mx, my, 3, TFT_BLACK);
     }
 
     void drawStaticQuadrants() {
-        tft.fillScreen(TFT_BLACK);
-        
         // Bottom-Left (LL): Bright -
-        // Solid dark grey background
-        uint16_t bg_ll = tft.color565(50, 50, 50);
-        tft.fillRect(0, 121, 119, 119, bg_ll);
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(TFT_WHITE, bg_ll);
-        tft.setTextSize(2); // Scale font twice as large
-        tft.drawString("-", 70, 170, 4); // Offset +10 (70, 170)
-        tft.setTextSize(1); // Reset scale
+        uint16_t bg_ll = spr.color565(50, 50, 50);
+        spr.fillRect(0, 121, 119, 119, bg_ll);
+        spr.setTextDatum(MC_DATUM);
+        spr.setTextColor(TFT_WHITE, bg_ll);
+        spr.setTextSize(2);
+        spr.drawString("-", 70, 170, 4);
+        spr.setTextSize(1);
 
         // Bottom-Right (LR): Bright +
-        // Solid light grey background
-        uint16_t bg_lr = tft.color565(160, 160, 160);
-        tft.fillRect(121, 121, 119, 119, bg_lr);
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(TFT_BLACK, bg_lr); // High-contrast black "+" on light grey
-        tft.setTextSize(2); // Scale font twice as large
-        tft.drawString("+", 170, 170, 4); // Offset +10 (170, 170)
-        tft.setTextSize(1); // Reset scale
+        uint16_t bg_lr = spr.color565(160, 160, 160);
+        spr.fillRect(121, 121, 119, 119, bg_lr);
+        spr.setTextDatum(MC_DATUM);
+        spr.setTextColor(TFT_BLACK, bg_lr);
+        spr.setTextSize(2);
+        spr.drawString("+", 170, 170, 4);
+        spr.setTextSize(1);
 
         // Draw 2-pixel black divider lines
-        tft.drawFastVLine(119, 0, 240, TFT_BLACK);
-        tft.drawFastVLine(120, 0, 240, TFT_BLACK);
-        tft.drawFastHLine(0, 119, 240, TFT_BLACK);
-        tft.drawFastHLine(0, 120, 240, TFT_BLACK);
+        spr.drawFastVLine(119, 0, 240, TFT_BLACK);
+        spr.drawFastVLine(120, 0, 240, TFT_BLACK);
+        spr.drawFastHLine(0, 119, 240, TFT_BLACK);
+        spr.drawFastHLine(0, 120, 240, TFT_BLACK);
 
         // Draw outer boundary
-        tft.drawCircle(120, 120, 119, TFT_WHITE);
-        tft.drawCircle(120, 120, 118, TFT_DARKGREY);
+        spr.drawCircle(120, 120, 119, TFT_WHITE);
+        spr.drawCircle(120, 120, 118, TFT_DARKGREY);
     }
 
     void drawStaticColorPicker() {
-        tft.fillScreen(TFT_BLACK);
-        
         // Draw outer boundary
-        tft.drawCircle(120, 120, 119, TFT_WHITE);
-        tft.drawCircle(120, 120, 118, TFT_DARKGREY);
+        spr.drawCircle(120, 120, 119, TFT_WHITE);
+        spr.drawCircle(120, 120, 118, TFT_DARKGREY);
 
-        // Draw 10 discrete color wedges with 2-degree gaps radiating from center
+        // Draw 10 discrete color wedges
         for (int i = 0; i < 10; i++) {
             int start_angle = i * 36;
             int end_angle = (i + 1) * 36 - 2;
@@ -158,20 +115,60 @@ namespace DisplayManager {
                 int x2 = 120 + WHEEL_OUTER_RADIUS * cos(angle2);
                 int y2 = 120 + WHEEL_OUTER_RADIUS * sin(angle2);
                 
-                tft.fillTriangle(120, 120, x1, y1, x2, y2, col);
+                spr.fillTriangle(120, 120, x1, y1, x2, y2, col);
             }
         }
+    }
+
+    // Boot Log screen buffer variables
+    static String bootLogLines[8];
+    static uint16_t bootLogColors[8];
+    static int bootLogCount = 0;
+
+    void addBootLogLine(const char* line, uint16_t color) {
+        if (bootLogCount < 8) {
+            bootLogLines[bootLogCount] = line;
+            bootLogColors[bootLogCount] = color;
+            bootLogCount++;
+        } else {
+            // Scroll lines up
+            for (int i = 0; i < 7; i++) {
+                bootLogLines[i] = bootLogLines[i + 1];
+                bootLogColors[i] = bootLogColors[i + 1];
+            }
+            bootLogLines[7] = line;
+            bootLogColors[7] = color;
+        }
+
+        // Draw the scrolling boot log view
+        spr.fillScreen(TFT_BLACK);
+        
+        // Draw a clean premium circular frame border
+        spr.drawCircle(120, 120, 119, TFT_DARKGREY);
+        spr.drawCircle(120, 120, 118, spr.color565(30, 30, 30));
+
+        spr.setTextDatum(TC_DATUM);
+        spr.setTextColor(TFT_YELLOW, TFT_BLACK);
+        spr.drawString("SYSTEM BOOT", 120, 25, 2);
+
+        spr.setTextDatum(TL_DATUM);
+        spr.setTextSize(1);
+        int startY = 55;
+        for (int i = 0; i < bootLogCount; i++) {
+            spr.setTextColor(bootLogColors[i], TFT_BLACK);
+            spr.drawString(bootLogLines[i].c_str(), 35, startY + i * 16, 2);
+        }
+
+        spr.pushSprite(0, 0);
     }
 
     void init() {
         Serial.println("[DisplayManager] Initializing TFT display (GC9A01)...");
         
-        // Ensure backlight pin is configured and ON
         pinMode(TFT_BLK_PIN, OUTPUT);
         digitalWrite(TFT_BLK_PIN, HIGH);
 
-        // Perform manual hardware reset on the display module to ensure clean startup
-        Serial.println("[DisplayManager] Performing hardware reset...");
+        Serial.println("[DisplayManager] Performing hardware reset... (DMA Frame Buffer enabled)");
         pinMode(TFT_RST_PIN, OUTPUT);
         digitalWrite(TFT_RST_PIN, HIGH);
         delay(10);
@@ -183,142 +180,112 @@ namespace DisplayManager {
         tft.init();
         tft.setRotation(0);
         
-        // Initialize dynamic colors
-        segmentColors[0] = tft.color565(225, 240, 255); // Cold White
-        segmentColors[1] = tft.color565(255, 230, 160); // Warm White
+        // Create full frame buffer sprite in RAM
+        spr.createSprite(240, 240);
+        spr.setRotation(0);
+        
+        segmentColors[0] = spr.color565(225, 240, 255); // Cold White
+        segmentColors[1] = spr.color565(255, 230, 160); // Warm White
         segmentColors[2] = 0xF800;                       // Red
-        segmentColors[3] = tft.color565(255, 105, 180); // Pink
+        segmentColors[3] = spr.color565(255, 105, 180); // Pink
         segmentColors[4] = 0xFD20;                       // Orange
         segmentColors[5] = 0xFFE0;                       // Yellow
-        segmentColors[6] = tft.color565(0, 200, 0);     // Green
+        segmentColors[6] = spr.color565(0, 200, 0);     // Green
         segmentColors[7] = 0x001F;                       // Blue
-        segmentColors[8] = tft.color565(75, 0, 130);     // Indigo
-        segmentColors[9] = tft.color565(180, 50, 240);   // Violet
+        segmentColors[8] = spr.color565(75, 0, 130);     // Indigo
+        segmentColors[9] = spr.color565(180, 50, 240);   // Violet
         
-        // Render initial quadrants
-        drawStaticQuadrants();
-        Serial.println("[DisplayManager] Display initialized.");
+        // Initial quadrants rendering
+        update(false, DEFAULT_BRIGHTNESS, segmentColors[1], 1, false);
+        Serial.println("[DisplayManager] Display and Sprite initialized.");
     }
 
     void update(bool lampOn, int brightness, uint16_t color, int activeSegmentIndex, bool colorPickerActive) {
-        
-        // 1. Transition between screens
-        if (colorPickerActive != lastColorPickerActive) {
-            if (colorPickerActive) {
-                drawStaticColorPicker();
-                lastSegmentIndex = -1; // Force redraw of segment indicator
-                lastColor = 0;         // Force redraw of checkmark preview
-            } else {
-                drawStaticQuadrants();
-                // Force redraw of all quadrant components
-                lastBrightness = -1;
-                lastLampOn = !lampOn; 
-                lastColor = 0;
-            }
-            lastColorPickerActive = colorPickerActive;
-        }
+        spr.fillScreen(TFT_BLACK);
 
-        // 2. Dynamic UI updating
         if (colorPickerActive) {
-            // Draw segment selected dot
-            if (activeSegmentIndex != lastSegmentIndex) {
-                if (lastSegmentIndex >= 0) {
-                    eraseSegmentIndicator(lastSegmentIndex);
-                }
-                drawSegmentIndicator(activeSegmentIndex);
-                lastSegmentIndex = activeSegmentIndex;
-            }
+            drawStaticColorPicker();
 
-            // Draw center checkmark button filled with active color selection
-            if (color != lastColor) {
-                tft.fillCircle(120, 120, CLOSE_BTN_RADIUS, color);
-                tft.drawCircle(120, 120, CLOSE_BTN_RADIUS, TFT_WHITE);
-                drawCheckmark(120, 120, color);
-                
-                lastColor = color;
-            }
+            drawSegmentIndicator(activeSegmentIndex);
+
+            spr.fillCircle(120, 120, CLOSE_BTN_RADIUS, color);
+            spr.drawCircle(120, 120, CLOSE_BTN_RADIUS, TFT_WHITE);
+            drawCheckmark(120, 120, color);
         } else {
+            drawStaticQuadrants();
+
             // Top-Left (UL) Quadrant: Power Switch
-            if (lampOn != lastLampOn) {
-                uint16_t bg = lampOn ? TFT_WHITE : tft.color565(80, 80, 80);
-                tft.fillRect(0, 0, 119, 119, bg);
-                tft.setTextDatum(MC_DATUM);
-                tft.setTextColor(lampOn ? TFT_BLACK : TFT_WHITE, bg);
-                tft.drawString(lampOn ? "ON" : "OFF", 70, 70, 4); // Offset at (70, 70)
-                
-                lastLampOn = lampOn;
-                lastBrightness = -1; // Force HUD redraw on top
-            }
+            uint16_t bg = lampOn ? TFT_WHITE : spr.color565(80, 80, 80);
+            spr.fillRect(0, 0, 119, 119, bg);
+            spr.setTextDatum(MC_DATUM);
+            spr.setTextColor(lampOn ? TFT_BLACK : TFT_WHITE, bg);
+            spr.drawString(lampOn ? "ON" : "OFF", 70, 70, 4);
 
             // Top-Right (UR) Quadrant: Color Preview Block
-            if (color != lastColor) {
-                tft.fillRect(121, 0, 119, 119, color);
-                
-                lastColor = color;
-                lastBrightness = -1; // Force HUD redraw on top
-            }
+            spr.fillRect(121, 0, 119, 119, color);
+
+            // Redraw central divider lines to clean up overlapping drawings
+            spr.drawFastVLine(119, 0, 240, TFT_BLACK);
+            spr.drawFastVLine(120, 0, 240, TFT_BLACK);
+            spr.drawFastHLine(0, 119, 240, TFT_BLACK);
+            spr.drawFastHLine(0, 120, 240, TFT_BLACK);
+            spr.drawCircle(120, 120, 119, TFT_WHITE);
+            spr.drawCircle(120, 120, 118, TFT_DARKGREY);
 
             // Central HUD: Brightness indicator
-            if (brightness != lastBrightness) {
-                // Redraw outer borders & dividers to keep them clean
-                tft.drawCircle(120, 120, 119, TFT_WHITE);
-                tft.drawCircle(120, 120, 118, TFT_DARKGREY);
-                tft.drawFastVLine(119, 0, 240, TFT_BLACK);
-                tft.drawFastVLine(120, 0, 240, TFT_BLACK);
-                tft.drawFastHLine(0, 119, 240, TFT_BLACK);
-                tft.drawFastHLine(0, 120, 240, TFT_BLACK);
-
-                tft.fillCircle(120, 120, 33, TFT_BLACK);
-                tft.drawCircle(120, 120, 33, TFT_BLACK);
-                tft.setTextDatum(MC_DATUM);
-                tft.setTextColor(tft.color565(200, 200, 200), TFT_BLACK);
-                
-                char brBuf[8];
-                snprintf(brBuf, sizeof(brBuf), "%d%%", brightness);
-                tft.drawString(brBuf, 120, 120, 4); // Larger Font (Size 4)
-                
-                lastBrightness = brightness;
-            }
+            spr.fillCircle(120, 120, 33, TFT_BLACK);
+            spr.drawCircle(120, 120, 33, TFT_BLACK);
+            spr.setTextDatum(MC_DATUM);
+            spr.setTextColor(spr.color565(200, 200, 200), TFT_BLACK);
+            
+            char brBuf[8];
+            snprintf(brBuf, sizeof(brBuf), "%d%%", brightness);
+            spr.drawString(brBuf, 120, 120, 4);
         }
+
+        // Push frame buffer to screen instantly
+        spr.pushSprite(0, 0);
     }
 
     void drawOtaProgress(unsigned int progress, unsigned int total) {
-        if (progress == 0) {
-            tft.fillScreen(TFT_BLACK);
-            tft.drawCircle(120, 120, 119, TFT_WHITE);
-            tft.drawCircle(120, 120, 118, TFT_DARKGREY);
-            tft.setTextDatum(MC_DATUM);
-            tft.setTextColor(TFT_WHITE, TFT_BLACK);
-            tft.drawString("OTA Update", 120, 60, 4); // Large Title
-            tft.setTextColor(TFT_RED, TFT_BLACK);
-            tft.drawString("Do not turn off power", 120, 95, 2); // Caution Subtitle
-        }
+        spr.fillScreen(TFT_BLACK);
+        spr.drawCircle(120, 120, 119, TFT_WHITE);
+        spr.drawCircle(120, 120, 118, TFT_DARKGREY);
+        spr.setTextDatum(MC_DATUM);
+        spr.setTextColor(TFT_WHITE, TFT_BLACK);
+        spr.drawString("OTA Update", 120, 60, 4);
+        spr.setTextColor(TFT_RED, TFT_BLACK);
+        spr.drawString("Do not turn off power", 120, 95, 2);
 
         int percentage = (progress * 100) / total;
         char progressBuf[32];
         snprintf(progressBuf, sizeof(progressBuf), "Updating: %d%%", percentage);
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-        tft.drawString(progressBuf, 120, 135, 2);
+        spr.setTextDatum(MC_DATUM);
+        spr.setTextColor(TFT_YELLOW, TFT_BLACK);
+        spr.drawString(progressBuf, 120, 135, 2);
 
         int barWidth = 160;
         int barHeight = 16;
         int barX = 120 - barWidth / 2;
         int barY = 165;
-        tft.drawRect(barX, barY, barWidth, barHeight, TFT_WHITE);
+        spr.drawRect(barX, barY, barWidth, barHeight, TFT_WHITE);
         int fillWidth = (percentage * (barWidth - 4)) / 100;
-        tft.fillRect(barX + 2, barY + 2, fillWidth, barHeight - 4, TFT_GREEN);
-        tft.fillRect(barX + 2 + fillWidth, barY + 2, (barWidth - 4) - fillWidth, barHeight - 4, TFT_BLACK);
+        spr.fillRect(barX + 2, barY + 2, fillWidth, barHeight - 4, TFT_GREEN);
+        spr.fillRect(barX + 2 + fillWidth, barY + 2, (barWidth - 4) - fillWidth, barHeight - 4, TFT_BLACK);
+        
+        spr.pushSprite(0, 0);
     }
 
     void drawOtaError(const char* errorMsg) {
-        tft.fillScreen(TFT_BLACK);
-        tft.drawCircle(120, 120, 119, TFT_RED);
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(TFT_RED, TFT_BLACK);
-        tft.drawString("OTA UPDATE FAILED", 120, 80, 2);
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        tft.drawString(errorMsg, 120, 130, 2);
-        tft.drawString("Rebooting...", 120, 170, 2);
+        spr.fillScreen(TFT_BLACK);
+        spr.drawCircle(120, 120, 119, TFT_RED);
+        spr.setTextDatum(MC_DATUM);
+        spr.setTextColor(TFT_RED, TFT_BLACK);
+        spr.drawString("OTA UPDATE FAILED", 120, 80, 2);
+        spr.setTextColor(TFT_WHITE, TFT_BLACK);
+        spr.drawString(errorMsg, 120, 130, 2);
+        spr.drawString("Rebooting...", 120, 170, 2);
+        
+        spr.pushSprite(0, 0);
     }
 }
