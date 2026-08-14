@@ -195,7 +195,7 @@ namespace DisplayManager {
         spr.setTextColor(TFT_WHITE, TFT_BLACK);
         char pctBuf[16];
         snprintf(pctBuf, sizeof(pctBuf), "%d%%", brightness);
-        spr.drawString(pctBuf, 120, 50, 4);
+        spr.drawString(pctBuf, 120, 70, 4);
         spr.setTextColor(spr.color565(150, 150, 150), TFT_BLACK);
         spr.drawString("BRIGHTNESS", 120, 190, 2);
     }
