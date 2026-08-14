@@ -11,7 +11,7 @@ namespace DisplayManager {
     void addBootLogLine(const char* line, uint16_t color);
 
     // Redraw screen with latest lamp state and overlay state
-    void update(bool lampOn, int brightness, uint16_t color, int activeSegmentIndex, bool colorPickerActive);
+    void update(bool lampOn, int brightness, uint16_t color, int activeSegmentIndex, bool allLightsActive, bool brightnessPickerActive);
 
     // Convert a hue value (0-359) to a 16-bit RGB565 color value
     uint16_t hueToRGB565(int hue);

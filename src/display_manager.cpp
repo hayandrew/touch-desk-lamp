@@ -53,6 +53,7 @@ namespace DisplayManager {
         spr.drawLine(cx - 2, cy + 5, cx + 10, cy - 7, chkColor);
     }
 
+    /* Commented out color wheel segment indicator
     void drawSegmentIndicator(int segmentIndex) {
         if (segmentIndex < 0 || segmentIndex >= 10) return;
         float angle = (segmentIndex * 36 + 17) * DEG_TO_RAD;
@@ -64,6 +65,7 @@ namespace DisplayManager {
         spr.fillCircle(mx, my, 5, TFT_WHITE);
         spr.fillCircle(mx, my, 3, TFT_BLACK);
     }
+    */
 
     void drawStaticQuadrants() {
         // Bottom-Left (LL): Bright -
@@ -95,6 +97,7 @@ namespace DisplayManager {
         spr.drawCircle(120, 120, 118, TFT_DARKGREY);
     }
 
+    /* Commented out color wheel drawing code
     void drawStaticColorPicker() {
         // Draw outer boundary
         spr.drawCircle(120, 120, 119, TFT_WHITE);
@@ -118,6 +121,83 @@ namespace DisplayManager {
                 spr.fillTriangle(120, 120, x1, y1, x2, y2, col);
             }
         }
+    }
+    */
+
+    void drawAllLightsOverlay() {
+        // Clear screen
+        spr.fillScreen(TFT_BLACK);
+
+        // Left Half (X: 0 to 119): Goodnight Button
+        uint16_t bg_gn = spr.color565(25, 35, 75); // Midnight navy blue
+        spr.fillRect(0, 0, 119, 240, bg_gn);
+        spr.setTextDatum(MC_DATUM);
+        spr.setTextColor(TFT_WHITE, bg_gn);
+        spr.drawString("GOOD", 60, 105, 4);
+        spr.drawString("NIGHT", 60, 135, 4);
+
+        // Right Half (X: 121 to 239): Cancel Button
+        uint16_t bg_cn = spr.color565(75, 75, 75); // Sleek charcoal grey
+        spr.fillRect(121, 0, 119, 240, bg_cn);
+        spr.setTextDatum(MC_DATUM);
+        spr.setTextColor(TFT_WHITE, bg_cn);
+        spr.drawString("CANCEL", 180, 120, 4);
+
+        // Draw 2-pixel black divider line in the center
+        spr.drawFastVLine(119, 0, 240, TFT_BLACK);
+        spr.drawFastVLine(120, 0, 240, TFT_BLACK);
+
+        // Draw outer boundary circles to frame the round screen
+        spr.drawCircle(120, 120, 119, TFT_WHITE);
+        spr.drawCircle(120, 120, 118, TFT_DARKGREY);
+    }
+
+    void drawBrightnessPicker(int brightness) {
+        // Clear screen
+        spr.fillScreen(TFT_BLACK);
+
+        // Arc starts at 135 degrees (bottom-left) and ends at 405 degrees (bottom-right)
+        // Total range = 270 degrees
+        int activeAngle = 135 + (brightness * 270 / 100);
+        
+        uint16_t activeCol = spr.color565(255, 215, 0); // Gold
+        uint16_t inactiveCol = spr.color565(40, 40, 40); // Dark Grey
+        
+        // Draw the slider ring using filled triangles (wedges) from the center to outer radius (100)
+        for (int a = 135; a < 405; a++) {
+            float rad1 = a * DEG_TO_RAD;
+            float rad2 = (a + 1) * DEG_TO_RAD;
+            
+            int x1 = 120 + 100 * cos(rad1);
+            int y1 = 120 + 100 * sin(rad1);
+            int x2 = 120 + 100 * cos(rad2);
+            int y2 = 120 + 100 * sin(rad2);
+            
+            uint16_t col = (a < activeAngle) ? activeCol : inactiveCol;
+            spr.fillTriangle(120, 120, x1, y1, x2, y2, col);
+        }
+
+        // Mask out the center of the ring by filling it with a black circle (radius 80)
+        spr.fillCircle(120, 120, 80, TFT_BLACK);
+
+        // Draw outer boundary circles
+        spr.drawCircle(120, 120, 119, TFT_WHITE);
+        spr.drawCircle(120, 120, 118, TFT_DARKGREY);
+
+        // Draw central checkmark button
+        uint16_t chkBg = spr.color565(34, 139, 34); // Forest green
+        spr.fillCircle(120, 120, 33, chkBg);
+        spr.drawCircle(120, 120, 33, TFT_WHITE);
+        drawCheckmark(120, 120, chkBg);
+
+        // Draw text info
+        spr.setTextDatum(MC_DATUM);
+        spr.setTextColor(TFT_WHITE, TFT_BLACK);
+        char pctBuf[16];
+        snprintf(pctBuf, sizeof(pctBuf), "%d%%", brightness);
+        spr.drawString(pctBuf, 120, 50, 4);
+        spr.setTextColor(spr.color565(150, 150, 150), TFT_BLACK);
+        spr.drawString("BRIGHTNESS", 120, 190, 2);
     }
 
     // Boot Log screen buffer variables
@@ -144,7 +224,7 @@ namespace DisplayManager {
         spr.fillScreen(TFT_BLACK);
         
         // Draw a clean premium circular frame border
-        spr.drawCircle(120, 120, 119, TFT_DARKGREY);
+        spr.drawCircle(120, 120, 119, TFT_WHITE);
         spr.drawCircle(120, 120, 118, spr.color565(30, 30, 30));
 
         spr.setTextDatum(TC_DATUM);
@@ -196,21 +276,17 @@ namespace DisplayManager {
         segmentColors[9] = spr.color565(180, 50, 240);   // Violet
         
         // Initial quadrants rendering
-        update(false, DEFAULT_BRIGHTNESS, segmentColors[1], 1, false);
+        update(false, DEFAULT_BRIGHTNESS, segmentColors[1], 1, false, false);
         Serial.println("[DisplayManager] Display and Sprite initialized.");
     }
 
-    void update(bool lampOn, int brightness, uint16_t color, int activeSegmentIndex, bool colorPickerActive) {
+    void update(bool lampOn, int brightness, uint16_t color, int activeSegmentIndex, bool allLightsActive, bool brightnessPickerActive) {
         spr.fillScreen(TFT_BLACK);
 
-        if (colorPickerActive) {
-            drawStaticColorPicker();
-
-            drawSegmentIndicator(activeSegmentIndex);
-
-            spr.fillCircle(120, 120, CLOSE_BTN_RADIUS, color);
-            spr.drawCircle(120, 120, CLOSE_BTN_RADIUS, TFT_WHITE);
-            drawCheckmark(120, 120, color);
+        if (allLightsActive) {
+            drawAllLightsOverlay();
+        } else if (brightnessPickerActive) {
+            drawBrightnessPicker(brightness);
         } else {
             drawStaticQuadrants();
 
@@ -221,8 +297,12 @@ namespace DisplayManager {
             spr.setTextColor(lampOn ? TFT_BLACK : TFT_WHITE, bg);
             spr.drawString(lampOn ? "ON" : "OFF", 70, 70, 4);
 
-            // Top-Right (UR) Quadrant: Color Preview Block
-            spr.fillRect(121, 0, 119, 119, color);
+            // Top-Right (UR) Quadrant: All Lights Button
+            uint16_t bg_ur = spr.color565(70, 80, 150); // Premium dark purple/indigo
+            spr.fillRect(121, 0, 119, 119, bg_ur);
+            spr.setTextDatum(MC_DATUM);
+            spr.setTextColor(TFT_WHITE, bg_ur);
+            spr.drawString("ALL", 180, 70, 4);
 
             // Redraw central divider lines to clean up overlapping drawings
             spr.drawFastVLine(119, 0, 240, TFT_BLACK);

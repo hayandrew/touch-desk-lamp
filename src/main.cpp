@@ -13,7 +13,15 @@ bool lampOn = false;
 int brightness = DEFAULT_BRIGHTNESS;
 uint16_t activeColor = 0xFF34; // Default to Warm White (RGB 255, 230, 160)
 int activeSegmentIndex = 1;    // Default to Warm White segment (index 1)
-bool colorPickerActive = false;
+// bool colorPickerActive = false;
+bool allLightsActive = false;
+bool brightnessPickerActive = false;
+const char* activeScene = "Manual";
+
+// Publication retry queue state
+static bool needPublishState = false;
+static const char* pendingAction = nullptr;
+static int publishRetryCount = 0;
 
 // Touch State Caching
 static bool lastTouchedState = false;
@@ -161,6 +169,62 @@ void loop() {
   // Poll touch panel state
   TouchManager::update();
 
+  // Monitor connection and retry publishing only when display is awake
+  if (!displaySleeping) {
+    // Monitor and recover WiFi connection if dropped
+    if (WiFi.status() != WL_CONNECTED) {
+      static unsigned long lastWifiReconnect = 0;
+      if (millis() - lastWifiReconnect > 5000) {
+        lastWifiReconnect = millis();
+        Serial.println("[WiFi] Lost connection. Triggering background reconnect...");
+        WiFi.disconnect();
+        WiFi.reconnect();
+      }
+    }
+
+    // Process publication retry queue (non-blocking)
+    if (needPublishState || pendingAction != nullptr) {
+      static unsigned long lastPublishAttempt = 0;
+      if (millis() - lastPublishAttempt > 1500) { // Try every 1.5 seconds if failing
+        lastPublishAttempt = millis();
+        
+        if (WiFi.status() == WL_CONNECTED && MQTTManager::isConnected()) {
+          bool success = false;
+          if (pendingAction != nullptr) {
+            success = MQTTManager::publishAction(pendingAction);
+            if (success) {
+              pendingAction = nullptr; // Clear pending action on success
+              publishRetryCount = 0;
+              Serial.println("[MQTT] Queued Action published successfully.");
+            }
+          } else if (needPublishState) {
+            success = MQTTManager::publishState();
+            if (success) {
+              needPublishState = false; // Clear pending state on success
+              publishRetryCount = 0;
+              Serial.println("[MQTT] Queued State published successfully.");
+            }
+          }
+          
+          if (!success) {
+            publishRetryCount++;
+            Serial.printf("[MQTT] Publish failed. Retrying in 1.5s... (Attempt %d/5)\n", publishRetryCount);
+          }
+        } else {
+          Serial.println("[MQTT] Queue deferred: Waiting for network/broker connection...");
+        }
+
+        // Drop after 5 attempts to prevent blocking or log spam
+        if (publishRetryCount >= 5) {
+          Serial.println("[MQTT] Queue dropped: Maximum publish retries (5) exceeded.");
+          pendingAction = nullptr;
+          needPublishState = false;
+          publishRetryCount = 0;
+        }
+      }
+    }
+  }
+
   bool isTouched = TouchManager::isTouched();
 
   // Inactivity / Sleep state machine logic
@@ -185,25 +249,27 @@ void loop() {
 
   // Check for inactivity timeout (30 seconds)
   if (!displaySleeping && (millis() - lastInteractionTime > 30000)) {
-    // If the color picker is active, close it first
-    if (colorPickerActive) {
-      colorPickerActive = false;
-      Serial.println("[Main] Inactivity timeout: Closing Color Picker.");
+    // If any overlay is active, close it first
+    if (allLightsActive || brightnessPickerActive) {
+      allLightsActive = false;
+      brightnessPickerActive = false;
+      Serial.println("[Main] Inactivity timeout: Closing active overlay/picker.");
     }
     
-    // Draw the final state (clean quadrants screen) before screen goes black
+    // Draw the final state before screen goes black
     DisplayManager::update(
       lampOn,
       brightness,
       activeColor,
       activeSegmentIndex,
-      colorPickerActive
+      allLightsActive,
+      brightnessPickerActive
     );
     
     // Put display backlight to sleep
     pinMode(TFT_BLK_PIN, OUTPUT);
     digitalWrite(TFT_BLK_PIN, LOW);
-    Serial.println("[Main] Inactivity timeout: Putting display to sleep.");
+    Serial.println("[Main] Inactivity timeout: Putting display backlight to sleep.");
     
     displaySleeping = true;
   }
@@ -218,67 +284,127 @@ void loop() {
     int dy = ty - SCREEN_CENTER_Y;
     int dist_sq = dx * dx + dy * dy;
 
-    if (colorPickerActive) {
+    if (allLightsActive) {
       if (!lastTouchedState) {
-        // Tapped close button (checkmark) in the center
+        if (tx < SCREEN_CENTER_X) {
+          // Left side: GOODNIGHT
+          Serial.println("[Main] GOODNIGHT button pressed.");
+          
+          // Queue the one-off "goodnight" action for the retry queue
+          pendingAction = "goodnight";
+          publishRetryCount = 0;
+          
+          allLightsActive = false;
+          delay(150); // Debounce
+        } else {
+          // Right side: CANCEL
+          Serial.println("[Main] CANCEL button pressed.");
+          allLightsActive = false;
+          delay(150); // Debounce
+        }
+      }
+      
+      /* Commented out old color picker logic for future use
+      if (!lastTouchedState) {
         if (dist_sq <= CLOSE_BTN_RADIUS * CLOSE_BTN_RADIUS) {
           colorPickerActive = false;
           Serial.println("[Main] Color Picker overlay closed (checkmark).");
-          delay(150); // Small debounce
+          delay(150);
         }
       }
-      // Dragging/Tapping inside the Color Ring boundaries
       if (dist_sq >= CLOSE_BTN_RADIUS * CLOSE_BTN_RADIUS && 
           dist_sq <= WHEEL_OUTER_RADIUS * WHEEL_OUTER_RADIUS) {
         float angle_deg = atan2(dy, dx) * RAD_TO_DEG;
         if (angle_deg < 0) angle_deg += 360;
-        
         int segIndex = (int)(angle_deg) / 36 % 10;
         activeSegmentIndex = segIndex;
         activeColor = DisplayManager::getSegmentColor(activeSegmentIndex);
-        
-        // Print color update to serial console
         static unsigned long lastPrintTime = 0;
         if (millis() - lastPrintTime >= 100) {
           Serial.printf("[Main] Color drag: Segment=%d, RGB=0x%04X\n", activeSegmentIndex, activeColor);
           lastPrintTime = millis();
         }
       }
+      */
+    } else if (brightnessPickerActive) {
+      if (dist_sq <= 33 * 33) {
+        // Tapped checkmark button in the center
+        if (!lastTouchedState) {
+          brightnessPickerActive = false;
+          Serial.println("[Main] Brightness Picker closed (checkmark).");
+          delay(150); // Debounce
+        }
+      } else if (dist_sq >= 70 * 70 && dist_sq <= 110 * 110) {
+        // Dragging/Tapping inside the slider zone
+        float angle_deg = atan2(dy, dx) * RAD_TO_DEG;
+        if (angle_deg < 0) angle_deg += 360;
+        
+        // Arc slider runs from 135 (bottom-left) to 405 (bottom-right)
+        // Normalize the touch angle to fit within the active range, handling the dead-zone gap
+        float angle = angle_deg;
+        if (angle >= 45 && angle < 90) {
+          // Closer to 100% end (45 degrees / 405 degrees)
+          angle = 405.0f;
+        } else if (angle >= 90 && angle < 135) {
+          // Closer to 0% end (135 degrees)
+          angle = 135.0f;
+        } else if (angle < 45) {
+          // Wrap angles in [0, 45] to [360, 405]
+          angle += 360.0f;
+        }
+        
+        int newBr = (int)((angle - 135.0f) * 100.0f / 270.0f);
+        if (newBr < 1) newBr = 1;
+        if (newBr > 100) newBr = 100;
+        
+        if (brightness != newBr) {
+          brightness = newBr;
+          static unsigned long lastPrintTime = 0;
+          if (millis() - lastPrintTime >= 100) {
+            Serial.printf("[Main] Brightness drag: %d%%\n", brightness);
+            lastPrintTime = millis();
+          }
+        }
+      }
     } else {
       // Normal Quadrant Interactions
       if (!lastTouchedState) {
-        if (tx < SCREEN_CENTER_X && ty < SCREEN_CENTER_Y) {
+        if (dist_sq <= 33 * 33) {
+          // Center tapped: open brightness picker overlay!
+          brightnessPickerActive = true;
+          ignoreUntilRelease = true;
+          Serial.println("[Main] Opening Brightness Picker overlay...");
+        }
+        else if (tx < SCREEN_CENTER_X && ty < SCREEN_CENTER_Y) {
           // Top-Left: Power Toggle
           lampOn = !lampOn;
           Serial.printf("[Main] Power Switch toggled: %s\n", lampOn ? "ON" : "OFF");
         } 
         else if (tx >= SCREEN_CENTER_X && ty < SCREEN_CENTER_Y) {
-          // Top-Right: Open Color Picker Overlay
-          colorPickerActive = true;
-          Serial.println("[Main] Opening Color Picker overlay...");
+          // Top-Right: Open All Lights Overlay
+          allLightsActive = true;
+          ignoreUntilRelease = true;
+          Serial.println("[Main] Opening All Lights overlay...");
         } 
         else if (tx < SCREEN_CENTER_X && ty >= SCREEN_CENTER_Y) {
           // Bottom-Left: Brightness Down (-)
-          if (brightness > MIN_BRIGHTNESS) {
-            brightness -= BRIGHTNESS_STEP;
-            Serial.printf("[Main] Brightness decreased: %d%%\n", brightness);
-          }
+          brightness = max(brightness - BRIGHTNESS_STEP, MIN_BRIGHTNESS);
+          Serial.printf("[Main] Brightness decreased: %d%%\n", brightness);
         } 
         else if (tx >= SCREEN_CENTER_X && ty >= SCREEN_CENTER_Y) {
           // Bottom-Right: Brightness Up (+)
-          if (brightness < MAX_BRIGHTNESS) {
-            brightness += BRIGHTNESS_STEP;
-            Serial.printf("[Main] Brightness increased: %d%%\n", brightness);
-          }
+          brightness = min(brightness + BRIGHTNESS_STEP, MAX_BRIGHTNESS);
+          Serial.printf("[Main] Brightness increased: %d%%\n", brightness);
         }
         delay(150); // Small debounce to prevent accidental double-clicks
       }
     }
   }
   
-  // Broadcast local state updates to Home Assistant when user releases touch
+  // Queue state updates to Home Assistant when user releases touch
   if (lastTouchedState && !isTouched && !displaySleeping && !ignoreUntilRelease) {
-    MQTTManager::publishState();
+    needPublishState = true;
+    publishRetryCount = 0;
   }
   
   lastTouchedState = isTouched;
@@ -290,7 +416,8 @@ void loop() {
       brightness,
       activeColor,
       activeSegmentIndex,
-      colorPickerActive
+      allLightsActive,
+      brightnessPickerActive
     );
   }
 

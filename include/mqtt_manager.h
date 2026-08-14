@@ -17,7 +17,10 @@ namespace MQTTManager {
     bool isConnected();
 
     // Publish the current global lamp state to Home Assistant
-    void publishState();
+    bool publishState();
+
+    // Publish a custom one-off action event (like goodnight) to a dedicated topic
+    bool publishAction(const char* action);
 }
 
 #endif // MQTT_MANAGER_H

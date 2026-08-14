@@ -24,7 +24,8 @@ extern bool lampOn;
 extern int brightness;
 extern uint16_t activeColor;
 extern int activeSegmentIndex;
-extern bool colorPickerActive;
+// extern bool colorPickerActive;
+extern const char* activeScene;
 
 namespace MQTTManager {
     struct RGBColor {
@@ -45,6 +46,11 @@ namespace MQTTManager {
         {0, 0, 255},     // 7: Blue
         {75, 0, 130},    // 8: Indigo
         {180, 50, 240}   // 9: Violet
+    };
+
+    static const char* SEGMENT_SCENE_NAMES[10] = {
+        "cold_white", "warm_white", "red", "pink", "orange",
+        "yellow", "green", "blue", "indigo", "violet"
     };
 
     static WiFiClient wifiClient;
@@ -128,6 +134,12 @@ namespace MQTTManager {
                 Serial.printf("[MQTT] Color updated from HA: Segment %d (0x%04X)\n", activeSegmentIndex, activeColor);
             }
         }
+
+        // If this message arrived on our own state topic, it's our initial boot sync
+        if (strcmp(topic, stateTopic) == 0) {
+            client.unsubscribe(stateTopic);
+            Serial.println("[MQTT] Initial state synchronized from retained message. Unsubscribed from state topic.");
+        }
     }
 
     // Connects to the MQTT broker and registers auto-discovery
@@ -165,8 +177,9 @@ namespace MQTTManager {
             client.subscribe(setTopic);
             Serial.println("[MQTT] Subscribed to command topic.");
             
-            // Publish initial switch state
-            publishState();
+            // Subscribe to state topic temporarily to read the last known state
+            client.subscribe(stateTopic);
+            Serial.println("[MQTT] Subscribed to state topic for initial sync.");
             return true;
         } else {
             Serial.print("[MQTT] Connection failed, state code: ");
@@ -203,8 +216,8 @@ namespace MQTTManager {
         return client.connected();
     }
 
-    void publishState() {
-        if (!client.connected()) return;
+    bool publishState() {
+        if (!client.connected()) return false;
         
         StaticJsonDocument<256> doc;
         doc["state"] = lampOn ? "ON" : "OFF";
@@ -222,11 +235,30 @@ namespace MQTTManager {
         colorObj["b"] = b;
         doc["color_mode"] = "rgb";
         
+        // Expose current scene/segment selection
+        doc["scene"] = activeScene;
+        
         char buffer[256];
         serializeJson(doc, buffer);
-        client.publish(stateTopic, buffer, true);
+        bool success = client.publish(stateTopic, buffer, true);
         
-        Serial.print("[MQTT] State broadcast: ");
-        Serial.println(buffer);
+        if (success) {
+            Serial.print("[MQTT] State broadcast: ");
+            Serial.println(buffer);
+        } else {
+            Serial.println("[MQTT] State broadcast failed!");
+        }
+        return success;
+    }
+
+    bool publishAction(const char* action) {
+        if (!client.connected()) return false;
+        bool success = client.publish("home_remote/action", action);
+        if (success) {
+            Serial.printf("[MQTT] Action published to home_remote/action: %s\n", action);
+        } else {
+            Serial.printf("[MQTT] Action publication failed: %s\n", action);
+        }
+        return success;
     }
 }
