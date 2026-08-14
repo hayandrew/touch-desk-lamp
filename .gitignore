@@ -1,5 +1,6 @@
 # PlatformIO Build Cache
 .pio/
+.cache/
 
 # Local Environment Variables (contains Wi-Fi credentials)
 .env

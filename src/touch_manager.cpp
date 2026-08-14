@@ -4,40 +4,73 @@
 #include <CST816S.h>
 
 namespace TouchManager {
-    static CST816S touch(TOUCH_SDA_PIN, TOUCH_SCL_PIN, TOUCH_RST_PIN, TOUCH_INT_PIN);
+    static CST816S* touchPtr = nullptr;
     static bool touched = false;
     static int lastX = 0;
     static int lastY = 0;
     static uint8_t lastGesture = 0;
     static uint8_t lastEvent = 1; // Start with UP event (1)
+    static bool touchInitialized = false;
 
     void init() {
-        Serial.println("[TouchManager] Initializing Wire (I2C) master...");
-        Wire.begin(TOUCH_SDA_PIN, TOUCH_SCL_PIN);
+        Serial.println("\n[TouchManager] Initializing touch screen (CST816S)...");
+        Serial.printf("  - SDA: %d\n", TOUCH_SDA_PIN);
+        Serial.printf("  - SCL: %d\n", TOUCH_SCL_PIN);
+        Serial.printf("  - RST: %d\n", TOUCH_RST_PIN);
+        Serial.printf("  - INT: %d\n", TOUCH_INT_PIN);
+
+        // Initialize the touch screen instance with configured pins
+        touchPtr = new CST816S(TOUCH_SDA_PIN, TOUCH_SCL_PIN, TOUCH_RST_PIN, TOUCH_INT_PIN);
+        touchPtr->begin(FALLING);
+        pinMode(TOUCH_INT_PIN, INPUT_PULLUP);
         
-        Serial.println("[TouchManager] Initializing touch screen (CST816S)...");
-        touch.begin();
+        // Re-apply I2C settings since touchPtr->begin() resets Wire
+        Wire.setTimeOut(50);
+        Wire.setClock(100000); // Use 100kHz standard speed
         
-        // Keep touch sensor awake for the testing/demo phase
-        touch.disable_auto_sleep();
-        Serial.println("[TouchManager] Touch screen initialized.");
+        // Keep touch sensor awake for testing
+        touchPtr->disable_auto_sleep();
+        touchInitialized = true;
+        Serial.println("[TouchManager] Touch screen initialization completed.\n");
     }
 
     void update() {
-        if (touch.available()) {
-            touched = (touch.data.points > 0);
-            lastX = touch.data.x;
-            lastY = touch.data.y;
-            lastGesture = touch.data.gestureID;
-            lastEvent = touch.data.event;
+        if (!touchInitialized || touchPtr == nullptr) return;
 
-            if (touched) {
-                Serial.printf("[Touch] Event: %s (%d), X: %d, Y: %d, Gesture: %s (0x%02X)\n",
-                              getEventName(), lastEvent, lastX, lastY, getGestureName(), lastGesture);
+        static unsigned long lastPollTime = 0;
+        unsigned long now = millis();
+        if (now - lastPollTime < 30) return;
+        lastPollTime = now;
+
+        Wire.beginTransmission(0x15);
+        Wire.write(0x01);
+        byte error = Wire.endTransmission(true);
+
+        if (error == 0) {
+            if (Wire.requestFrom(0x15, 6) == 6) {
+                byte data_raw[6];
+                for (int i = 0; i < 6; i++) {
+                    data_raw[i] = Wire.read();
+                }
+
+                touchPtr->data.gestureID = data_raw[0];
+                touchPtr->data.points = data_raw[1];
+                touchPtr->data.event = data_raw[2] >> 6;
+                touchPtr->data.x = ((data_raw[2] & 0xF) << 8) + data_raw[3];
+                touchPtr->data.y = ((data_raw[4] & 0xF) << 8) + data_raw[5];
+
+                touched = (touchPtr->data.points > 0);
+                lastX = touchPtr->data.x;
+                lastY = touchPtr->data.y;
+                lastGesture = touchPtr->data.gestureID;
+                lastEvent = touchPtr->data.event;
+
+                if (touched) {
+                    Serial.printf("[Touch Polled] Event: %s (%d), X: %d, Y: %d, Gesture: %s (0x%02X)\n",
+                                  getEventName(), lastEvent, lastX, lastY, getGestureName(), lastGesture);
+                }
             }
         } else {
-            // If the library does not report new touch events, check if our last event
-            // was an UP event to transition the state back to not touched.
             if (lastEvent == 1) { // 1 = Up
                 touched = false;
             }

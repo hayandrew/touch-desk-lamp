@@ -18,8 +18,8 @@
 #define TFT_BLK_PIN  5
 
 // Touch (I2C) Pin Mappings (CST816S)
-#define TOUCH_SDA_PIN 3
-#define TOUCH_SCL_PIN 4
+#define TOUCH_SDA_PIN 11
+#define TOUCH_SCL_PIN 12
 #define TOUCH_RST_PIN 2
 #define TOUCH_INT_PIN 1
 
