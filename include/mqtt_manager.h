@@ -21,6 +21,9 @@ namespace MQTTManager {
 
     // Publish a custom one-off action event (like goodnight) to a dedicated topic
     bool publishAction(const char* action);
+
+    // Force an immediate MQTT reconnection attempt (bypassing the 5-second backoff)
+    void forceReconnect();
 }
 
 #endif // MQTT_MANAGER_H

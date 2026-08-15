@@ -258,11 +258,11 @@ namespace DisplayManager {
         delay(150);
 
         tft.init();
-        tft.setRotation(0);
+        tft.setRotation(2);
         
         // Create full frame buffer sprite in RAM
         spr.createSprite(240, 240);
-        spr.setRotation(0);
+        spr.setRotation(2);
         
         segmentColors[0] = spr.color565(225, 240, 255); // Cold White
         segmentColors[1] = spr.color565(255, 230, 160); // Warm White

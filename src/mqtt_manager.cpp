@@ -216,6 +216,10 @@ namespace MQTTManager {
         return client.connected();
     }
 
+    void forceReconnect() {
+        lastReconnectAttempt = 0;
+    }
+
     bool publishState() {
         if (!client.connected()) return false;
         

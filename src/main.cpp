@@ -5,8 +5,11 @@
 #include "display_manager.h"
 #include "touch_manager.h"
 #include <TFT_eSPI.h>
+#include <Wire.h>
 
 #include "mqtt_manager.h"
+#include <esp_sleep.h>
+#include "driver/rtc_io.h"
 
 // Lamp State Variables
 bool lampOn = false;
@@ -34,6 +37,9 @@ static unsigned long lastInteractionTime = 0;
 void setup() {
   // Initialize Serial Logging
   Serial.begin(115200);
+#ifdef ARDUINO_USB_CDC_ON_BOOT
+  Serial.setTxTimeoutMs(0); // Prevent blocking on serial writes if USB is disconnected/sleeping
+#endif
   delay(1000);
   Serial.println("\n=== Home Remote Starting ===");
 
@@ -174,11 +180,17 @@ void loop() {
     // Monitor and recover WiFi connection if dropped
     if (WiFi.status() != WL_CONNECTED) {
       static unsigned long lastWifiReconnect = 0;
-      if (millis() - lastWifiReconnect > 5000) {
+      if (millis() - lastWifiReconnect > 3000) { // Retry every 3 seconds until connected
         lastWifiReconnect = millis();
-        Serial.println("[WiFi] Lost connection. Triggering background reconnect...");
-        WiFi.disconnect();
-        WiFi.reconnect();
+        Serial.println("[WiFi] Re-initiating connection...");
+        WiFi.mode(WIFI_STA);
+        IPAddress local_IP(STATIC_IP_ADDR);
+        IPAddress gateway(GATEWAY_IP_ADDR);
+        IPAddress subnet(SUBNET_MASK);
+        IPAddress primaryDNS(DNS_PRIMARY);
+        IPAddress secondaryDNS(DNS_SECONDARY);
+        WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS);
+        WiFi.begin(WIFI_SSID, WIFI_PASS);
       }
     }
 
@@ -230,25 +242,28 @@ void loop() {
   // Inactivity / Sleep state machine logic
   if (isTouched) {
     lastInteractionTime = millis();
-    
-    if (displaySleeping) {
-      displaySleeping = false;
-      ignoreUntilRelease = true;
-      
-      // Wake up the backlight
-      pinMode(TFT_BLK_PIN, OUTPUT);
-      digitalWrite(TFT_BLK_PIN, HIGH);
-      Serial.println("[Main] Display woken up by touch. Ignoring initial press coordinates.");
-      
-      delay(150); // Small debounce
-    }
   } else {
     // Clear ignore flag when user lifts their finger
     ignoreUntilRelease = false;
   }
 
-  // Check for inactivity timeout (30 seconds)
-  if (!displaySleeping && (millis() - lastInteractionTime > 30000)) {
+  // Latched debug reading of TOUCH_INT_PIN
+  static bool intPinWasLow = false;
+  if (digitalRead(TOUCH_INT_PIN) == LOW) {
+    intPinWasLow = true;
+  }
+
+  static unsigned long lastDebugPrint = 0;
+  if (millis() - lastDebugPrint > 500) {
+    lastDebugPrint = millis();
+    if (isTouched) {
+      Serial.printf("[Debug] TOUCH_INT_PIN (GPIO %d) latched LOW: %s\n", TOUCH_INT_PIN, intPinWasLow ? "YES" : "NO");
+    }
+    intPinWasLow = false;
+  }
+
+  // Check for inactivity timeout (10 seconds)
+  if (!displaySleeping && (millis() - lastInteractionTime > 10000)) {
     // If any overlay is active, close it first
     if (allLightsActive || brightnessPickerActive) {
       allLightsActive = false;
@@ -269,15 +284,93 @@ void loop() {
     // Put display backlight to sleep
     pinMode(TFT_BLK_PIN, OUTPUT);
     digitalWrite(TFT_BLK_PIN, LOW);
-    Serial.println("[Main] Inactivity timeout: Putting display backlight to sleep.");
+    
+    // Shut down Wi-Fi radio to save power
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    Serial.println("[Main] Inactivity timeout: Entering Light Sleep & turning OFF WiFi...");
     
     displaySleeping = true;
+
+    // Configure power domains: keep the RTC peripheral power domain powered on
+    // so internal RTC pull-ups and the EXT1 wakeup controller remain functional.
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+
+    // Configure all touch screen pins as RTC IOs during sleep:
+    // 1. INT pin (GPIO 1) as input with RTC pull-up enabled for ext1 wakeup
+    rtc_gpio_init((gpio_num_t)TOUCH_INT_PIN);
+    rtc_gpio_set_direction((gpio_num_t)TOUCH_INT_PIN, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en((gpio_num_t)TOUCH_INT_PIN);
+    rtc_gpio_pulldown_dis((gpio_num_t)TOUCH_INT_PIN);
+
+    // 2. RST pin (GPIO 2) as output driven HIGH by the RTC domain to prevent reset
+    rtc_gpio_init((gpio_num_t)TOUCH_RST_PIN);
+    rtc_gpio_set_direction((gpio_num_t)TOUCH_RST_PIN, RTC_GPIO_MODE_OUTPUT_ONLY);
+    rtc_gpio_set_level((gpio_num_t)TOUCH_RST_PIN, 1);
+
+    // 3. I2C SDA/SCL pins (GPIO 11/12) with RTC pull-ups enabled to prevent floating
+    rtc_gpio_init((gpio_num_t)TOUCH_SDA_PIN);
+    rtc_gpio_set_direction((gpio_num_t)TOUCH_SDA_PIN, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en((gpio_num_t)TOUCH_SDA_PIN);
+    rtc_gpio_pulldown_dis((gpio_num_t)TOUCH_SDA_PIN);
+
+    rtc_gpio_init((gpio_num_t)TOUCH_SCL_PIN);
+    rtc_gpio_set_direction((gpio_num_t)TOUCH_SCL_PIN, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en((gpio_num_t)TOUCH_SCL_PIN);
+    rtc_gpio_pulldown_dis((gpio_num_t)TOUCH_SCL_PIN);
+
+    // Enable wakeup on touch interrupt (falling edge level-LOW on TOUCH_INT_PIN)
+    esp_sleep_enable_ext1_wakeup(1ULL << TOUCH_INT_PIN, ESP_EXT1_WAKEUP_ANY_LOW);
+    
+    // Enter hardware Light Sleep (CPU suspends execution here)
+    esp_light_sleep_start();
+
+    // De-initialize RTC IO pins to restore normal digital and I2C matrix configurations
+    rtc_gpio_deinit((gpio_num_t)TOUCH_INT_PIN);
+    rtc_gpio_deinit((gpio_num_t)TOUCH_RST_PIN);
+    rtc_gpio_deinit((gpio_num_t)TOUCH_SDA_PIN);
+    rtc_gpio_deinit((gpio_num_t)TOUCH_SCL_PIN);
+
+    // Re-establish active digital pin modes for touch screen
+    pinMode(TOUCH_INT_PIN, INPUT_PULLUP);
+    pinMode(TOUCH_RST_PIN, OUTPUT);
+    digitalWrite(TOUCH_RST_PIN, HIGH);
+
+    // Re-initialize I2C bus to restore routing and settings
+    Wire.begin(TOUCH_SDA_PIN, TOUCH_SCL_PIN);
+    Wire.setTimeOut(50);
+
+    displaySleeping = false;
+    ignoreUntilRelease = true; // Wait for touch release to prevent command double-firing
+    lastInteractionTime = millis();
+
+    // Wake up display backlight
+    pinMode(TFT_BLK_PIN, OUTPUT);
+    digitalWrite(TFT_BLK_PIN, HIGH);
+    Serial.println("[Main] Woke up from Light Sleep! Display backlight turned ON.");
+    Serial.println("[Main] Hardware wake-up event detected from EXT1 (TP_INT LOW)!");
+
+    // Re-enable WiFi and start connecting immediately on wake-up
+    WiFi.mode(WIFI_STA);
+    IPAddress local_IP(STATIC_IP_ADDR);
+    IPAddress gateway(GATEWAY_IP_ADDR);
+    IPAddress subnet(SUBNET_MASK);
+    IPAddress primaryDNS(DNS_PRIMARY);
+    IPAddress secondaryDNS(DNS_SECONDARY);
+    WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    Serial.println("[WiFi] Display woke up. Initiated WiFi connection.");
+    
+    // Force immediate MQTT connection attempt once WiFi is ready
+    MQTTManager::forceReconnect();
+    
+    delay(150); // Debounce
   }
 
   // Process UI touches only if display is awake and we are not ignoring the waking touch
   if (isTouched && !displaySleeping && !ignoreUntilRelease) {
-    int tx = TouchManager::getX();
-    int ty = TouchManager::getY();
+    int tx = 240 - TouchManager::getX();
+    int ty = 240 - TouchManager::getY();
     
     // Calculate polar coordinates relative to screen center
     int dx = tx - SCREEN_CENTER_X;
