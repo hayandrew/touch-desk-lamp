@@ -47,6 +47,14 @@ void setup() {
   DisplayManager::init();
   DisplayManager::addBootLogLine("Display Initialized.", TFT_GREEN);
 
+  // Initialize LEDC PWM channel for display backlight control
+  ledcSetup(0, 5000, 8); // Channel 0, 5kHz, 8-bit resolution
+  ledcAttachPin(TFT_BLK_PIN, 0);
+  ledcWrite(0, 255); // Default to full brightness (100% duty)
+
+  // Initialize boot animation on display
+  DisplayManager::drawBootAnimation(0);
+
   // Initialize touch manager
   TouchManager::init();
   DisplayManager::addBootLogLine("Touch Initialized.", TFT_GREEN);
@@ -72,56 +80,66 @@ void setup() {
     #error "WIFI_SSID and WIFI_PASS must be defined in .env!"
   #endif
 
-  // Wait for Wi-Fi connection with 10-second timeout, retrying every 2 seconds
+  // Wait for Wi-Fi connection with 10-second timeout, retrying every 2 seconds, while animating dots
   unsigned long wifiStart = millis();
   bool wifiConnected = false;
+  int animStep = 0;
+  unsigned long lastWifiSerialPrint = 0;
+
   while (millis() - wifiStart < 10000) {
     if (WiFi.status() == WL_CONNECTED) {
       wifiConnected = true;
       break;
     }
-    Serial.print("[WiFi] Connecting...\n");
-    DisplayManager::addBootLogLine("WiFi: Connecting...", TFT_YELLOW);
-    delay(2000);
+    
+    if (millis() - lastWifiSerialPrint >= 2000) {
+      Serial.println("[WiFi] Connecting...");
+      lastWifiSerialPrint = millis();
+    }
+
+    DisplayManager::drawBootAnimation(animStep++);
+    delay(200); // 5 frames per second
   }
 
   if (wifiConnected) {
     Serial.println("[WiFi] Connected successfully!");
     Serial.print("[WiFi] IP Address: ");
     Serial.println(WiFi.localIP());
-    char wifiBuf[64];
-    snprintf(wifiBuf, sizeof(wifiBuf), "WiFi: OK (%s)", WiFi.localIP().toString().c_str());
-    DisplayManager::addBootLogLine(wifiBuf, TFT_GREEN);
   } else {
     Serial.println("[WiFi] Connection timed out!");
-    DisplayManager::addBootLogLine("WiFi: No Connection", TFT_RED);
   }
 
   // Configure MQTT/diyHue
   MQTTManager::init();
 
-  // Connect to diyHue (MQTT) with 10-second timeout, retrying every 2 seconds
+  // Connect to diyHue (MQTT) with 10-second timeout, retrying every 2 seconds, while animating dots
   if (WiFi.status() == WL_CONNECTED) {
-    DisplayManager::addBootLogLine("Connecting to diyHue...", TFT_WHITE);
     unsigned long mqttStart = millis();
     bool mqttConnected = false;
+    unsigned long lastMqttSerialPrint = 0;
+
     while (millis() - mqttStart < 10000) {
       if (MQTTManager::connect()) {
         mqttConnected = true;
         break;
       }
-      Serial.print("[MQTT] Connecting...\n");
-      DisplayManager::addBootLogLine("diyHue: Retrying...", TFT_YELLOW);
-      delay(2000);
+      
+      if (millis() - lastMqttSerialPrint >= 2000) {
+        Serial.println("[MQTT] Connecting...");
+        lastMqttSerialPrint = millis();
+      }
+
+      DisplayManager::drawBootAnimation(animStep++);
+      delay(200); // 5 frames per second
     }
 
     if (mqttConnected) {
-      DisplayManager::addBootLogLine("diyHue: Connected!", TFT_GREEN);
+      Serial.println("[MQTT] Connected successfully!");
     } else {
-      DisplayManager::addBootLogLine("diyHue: No Connection", TFT_RED);
+      Serial.println("[MQTT] Connection timed out!");
     }
   } else {
-    DisplayManager::addBootLogLine("diyHue: No WiFi, skipped", TFT_RED);
+    Serial.println("[MQTT] No WiFi, skipped MQTT connection.");
   }
 
   // Configure ArduinoOTA
@@ -159,7 +177,6 @@ void setup() {
   DisplayManager::addBootLogLine("OTA Services Ready.", TFT_GREEN);
 
   DisplayManager::addBootLogLine("Boot Complete!", TFT_GREEN);
-  delay(1500); // Give the user time to read the final screen status before main loop
 
   lastInteractionTime = millis();
   Serial.println("=== Setup Complete. Entering loop ===\n");
@@ -281,9 +298,8 @@ void loop() {
       brightnessPickerActive
     );
     
-    // Put display backlight to sleep
-    pinMode(TFT_BLK_PIN, OUTPUT);
-    digitalWrite(TFT_BLK_PIN, LOW);
+    // Put display backlight to sleep (turn off PWM)
+    ledcWrite(0, 0);
     
     // Shut down Wi-Fi radio to save power
     WiFi.disconnect(true);
@@ -344,10 +360,14 @@ void loop() {
     ignoreUntilRelease = true; // Wait for touch release to prevent command double-firing
     lastInteractionTime = millis();
 
-    // Wake up display backlight
-    pinMode(TFT_BLK_PIN, OUTPUT);
-    digitalWrite(TFT_BLK_PIN, HIGH);
-    Serial.println("[Main] Woke up from Light Sleep! Display backlight turned ON.");
+    // Fade in the display backlight over 1 second (51 steps * 20ms = ~1.02s)
+    // Touches are ignored during this period because we do not poll coordinates,
+    // and ignoreUntilRelease forces user to lift finger first.
+    for (int duty = 0; duty <= 255; duty += 5) {
+      ledcWrite(0, duty);
+      delay(20);
+    }
+    Serial.println("[Main] Woke up from Light Sleep! Display backlight faded ON (1s).");
     Serial.println("[Main] Hardware wake-up event detected from EXT1 (TP_INT LOW)!");
 
     // Re-enable WiFi and start connecting immediately on wake-up

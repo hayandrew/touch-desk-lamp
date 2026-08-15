@@ -10,6 +10,9 @@ namespace DisplayManager {
     // Display a line in the scrolling verbose boot log screen
     void addBootLogLine(const char* line, uint16_t color);
 
+    // Draw three animated horizontal blue loading dots
+    void drawBootAnimation(int step);
+
     // Redraw screen with latest lamp state and overlay state
     void update(bool lampOn, int brightness, uint16_t color, int activeSegmentIndex, bool allLightsActive, bool brightnessPickerActive);
 

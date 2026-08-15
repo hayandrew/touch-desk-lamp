@@ -200,44 +200,27 @@ namespace DisplayManager {
         spr.drawString("BRIGHTNESS", 120, 190, 2);
     }
 
-    // Boot Log screen buffer variables
-    static String bootLogLines[8];
-    static uint16_t bootLogColors[8];
-    static int bootLogCount = 0;
-
     void addBootLogLine(const char* line, uint16_t color) {
-        if (bootLogCount < 8) {
-            bootLogLines[bootLogCount] = line;
-            bootLogColors[bootLogCount] = color;
-            bootLogCount++;
-        } else {
-            // Scroll lines up
-            for (int i = 0; i < 7; i++) {
-                bootLogLines[i] = bootLogLines[i + 1];
-                bootLogColors[i] = bootLogColors[i + 1];
-            }
-            bootLogLines[7] = line;
-            bootLogColors[7] = color;
-        }
+        // Redirect boot logs to the serial port
+        Serial.println(line);
+    }
 
-        // Draw the scrolling boot log view
+    void drawBootAnimation(int step) {
         spr.fillScreen(TFT_BLACK);
-        
+
         // Draw a clean premium circular frame border
         spr.drawCircle(120, 120, 119, TFT_WHITE);
         spr.drawCircle(120, 120, 118, spr.color565(30, 30, 30));
 
-        spr.setTextDatum(TC_DATUM);
-        spr.setTextColor(TFT_YELLOW, TFT_BLACK);
-        spr.drawString("SYSTEM BOOT", 120, 25, 2);
+        uint16_t brightBlue = spr.color565(0, 150, 255);
+        uint16_t dimBlue = spr.color565(0, 40, 80);
 
-        spr.setTextDatum(TL_DATUM);
-        spr.setTextSize(1);
-        int startY = 55;
-        for (int i = 0; i < bootLogCount; i++) {
-            spr.setTextColor(bootLogColors[i], TFT_BLACK);
-            spr.drawString(bootLogLines[i].c_str(), 35, startY + i * 16, 2);
-        }
+        int activeDot = step % 3;
+
+        // Draw three horizontal dots pulsing sequentially
+        spr.fillCircle(80, 120, (activeDot == 0) ? 10 : 6, (activeDot == 0) ? brightBlue : dimBlue);
+        spr.fillCircle(120, 120, (activeDot == 1) ? 10 : 6, (activeDot == 1) ? brightBlue : dimBlue);
+        spr.fillCircle(160, 120, (activeDot == 2) ? 10 : 6, (activeDot == 2) ? brightBlue : dimBlue);
 
         spr.pushSprite(0, 0);
     }
