@@ -11,19 +11,11 @@
 #include <esp_sleep.h>
 #include "driver/rtc_io.h"
 
-// Lamp State Variables
-bool lampOn = false;
-int brightness = DEFAULT_BRIGHTNESS;
-uint16_t activeColor = 0xFF34; // Default to Warm White (RGB 255, 230, 160)
-int activeSegmentIndex = 1;    // Default to Warm White segment (index 1)
-// bool colorPickerActive = false;
-bool allLightsActive = false;
-bool brightnessPickerActive = false;
-const char* activeScene = "Manual";
+// Studio State Variables
+bool studioOn = false;
 
 // Publication retry queue state
 static bool needPublishState = false;
-static const char* pendingAction = nullptr;
 static int publishRetryCount = 0;
 
 // Touch State Caching
@@ -41,7 +33,7 @@ void setup() {
   Serial.setTxTimeoutMs(0); // Prevent blocking on serial writes if USB is disconnected/sleeping
 #endif
   delay(1000);
-  Serial.println("\n=== Home Remote Starting ===");
+  Serial.println("\n=== Studio Controller Starting ===");
 
   // Initialize display first so we can draw boot logs
   DisplayManager::init();
@@ -109,10 +101,10 @@ void setup() {
     Serial.println("[WiFi] Connection timed out!");
   }
 
-  // Configure MQTT/diyHue
+  // Configure MQTT
   MQTTManager::init();
 
-  // Connect to diyHue (MQTT) with 10-second timeout, retrying every 2 seconds, while animating dots
+  // Connect to MQTT with 10-second timeout, retrying every 2 seconds, while animating dots
   if (WiFi.status() == WL_CONNECTED) {
     unsigned long mqttStart = millis();
     bool mqttConnected = false;
@@ -175,8 +167,20 @@ void setup() {
 
   ArduinoOTA.begin();
   DisplayManager::addBootLogLine("OTA Services Ready.", TFT_GREEN);
-
   DisplayManager::addBootLogLine("Boot Complete!", TFT_GREEN);
+
+  // 1. Turn off backlight before displaying the initial menu layout
+  ledcWrite(0, 0);
+
+  // 2. Draw the initial layout
+  DisplayManager::update(studioOn);
+
+  // 3. Fade in the screen over 500ms (25 steps * 20ms = 500ms)
+  for (int duty = 0; duty <= 255; duty += 10) {
+    ledcWrite(0, duty);
+    delay(20);
+  }
+  ledcWrite(0, 255); // Ensure full brightness
 
   lastInteractionTime = millis();
   Serial.println("=== Setup Complete. Entering loop ===\n");
@@ -212,30 +216,18 @@ void loop() {
     }
 
     // Process publication retry queue (non-blocking)
-    if (needPublishState || pendingAction != nullptr) {
+    if (needPublishState) {
       static unsigned long lastPublishAttempt = 0;
       if (millis() - lastPublishAttempt > 1500) { // Try every 1.5 seconds if failing
         lastPublishAttempt = millis();
         
         if (WiFi.status() == WL_CONNECTED && MQTTManager::isConnected()) {
-          bool success = false;
-          if (pendingAction != nullptr) {
-            success = MQTTManager::publishAction(pendingAction);
-            if (success) {
-              pendingAction = nullptr; // Clear pending action on success
-              publishRetryCount = 0;
-              Serial.println("[MQTT] Queued Action published successfully.");
-            }
-          } else if (needPublishState) {
-            success = MQTTManager::publishState();
-            if (success) {
-              needPublishState = false; // Clear pending state on success
-              publishRetryCount = 0;
-              Serial.println("[MQTT] Queued State published successfully.");
-            }
-          }
-          
-          if (!success) {
+          bool success = MQTTManager::publishStudioState(studioOn);
+          if (success) {
+            needPublishState = false; // Clear pending state on success
+            publishRetryCount = 0;
+            Serial.println("[MQTT] Queued State published successfully.");
+          } else {
             publishRetryCount++;
             Serial.printf("[MQTT] Publish failed. Retrying in 1.5s... (Attempt %d/5)\n", publishRetryCount);
           }
@@ -246,7 +238,6 @@ void loop() {
         // Drop after 5 attempts to prevent blocking or log spam
         if (publishRetryCount >= 5) {
           Serial.println("[MQTT] Queue dropped: Maximum publish retries (5) exceeded.");
-          pendingAction = nullptr;
           needPublishState = false;
           publishRetryCount = 0;
         }
@@ -264,42 +255,17 @@ void loop() {
     ignoreUntilRelease = false;
   }
 
-  // Latched debug reading of TOUCH_INT_PIN
-  static bool intPinWasLow = false;
-  if (digitalRead(TOUCH_INT_PIN) == LOW) {
-    intPinWasLow = true;
-  }
-
-  static unsigned long lastDebugPrint = 0;
-  if (millis() - lastDebugPrint > 500) {
-    lastDebugPrint = millis();
-    if (isTouched) {
-      Serial.printf("[Debug] TOUCH_INT_PIN (GPIO %d) latched LOW: %s\n", TOUCH_INT_PIN, intPinWasLow ? "YES" : "NO");
-    }
-    intPinWasLow = false;
-  }
-
   // Check for inactivity timeout (10 seconds)
   if (!displaySleeping && (millis() - lastInteractionTime > 10000)) {
-    // If any overlay is active, close it first
-    if (allLightsActive || brightnessPickerActive) {
-      allLightsActive = false;
-      brightnessPickerActive = false;
-      Serial.println("[Main] Inactivity timeout: Closing active overlay/picker.");
-    }
-    
     // Draw the final state before screen goes black
-    DisplayManager::update(
-      lampOn,
-      brightness,
-      activeColor,
-      activeSegmentIndex,
-      allLightsActive,
-      brightnessPickerActive
-    );
+    DisplayManager::update(studioOn);
     
-    // Put display backlight to sleep (turn off PWM)
-    ledcWrite(0, 0);
+    // Fade out the display backlight over 500ms (25 steps * 20ms = 500ms)
+    for (int duty = 250; duty >= 0; duty -= 10) {
+      ledcWrite(0, duty);
+      delay(20);
+    }
+    ledcWrite(0, 0); // Ensure fully off
     
     // Shut down Wi-Fi radio to save power
     WiFi.disconnect(true);
@@ -309,7 +275,6 @@ void loop() {
     displaySleeping = true;
 
     // Configure power domains: keep the RTC peripheral power domain powered on
-    // so internal RTC pull-ups and the EXT1 wakeup controller remain functional.
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
 
     // Configure all touch screen pins as RTC IOs during sleep:
@@ -360,15 +325,13 @@ void loop() {
     ignoreUntilRelease = true; // Wait for touch release to prevent command double-firing
     lastInteractionTime = millis();
 
-    // Fade in the display backlight over 1 second (51 steps * 20ms = ~1.02s)
-    // Touches are ignored during this period because we do not poll coordinates,
-    // and ignoreUntilRelease forces user to lift finger first.
-    for (int duty = 0; duty <= 255; duty += 5) {
+    // Fade in the display backlight over 500ms (25 steps * 20ms = 500ms)
+    for (int duty = 0; duty <= 255; duty += 10) {
       ledcWrite(0, duty);
       delay(20);
     }
-    Serial.println("[Main] Woke up from Light Sleep! Display backlight faded ON (1s).");
-    Serial.println("[Main] Hardware wake-up event detected from EXT1 (TP_INT LOW)!");
+    ledcWrite(0, 255); // Ensure full brightness
+    Serial.println("[Main] Woke up from Light Sleep! Display backlight faded ON (500ms).");
 
     // Re-enable WiFi and start connecting immediately on wake-up
     WiFi.mode(WIFI_STA);
@@ -389,149 +352,33 @@ void loop() {
 
   // Process UI touches only if display is awake and we are not ignoring the waking touch
   if (isTouched && !displaySleeping && !ignoreUntilRelease) {
-    int tx = 240 - TouchManager::getX();
-    int ty = 240 - TouchManager::getY();
-    
-    // Calculate polar coordinates relative to screen center
-    int dx = tx - SCREEN_CENTER_X;
-    int dy = ty - SCREEN_CENTER_Y;
-    int dist_sq = dx * dx + dy * dy;
-
-    if (allLightsActive) {
-      if (!lastTouchedState) {
-        if (tx < SCREEN_CENTER_X) {
-          // Left side: GOODNIGHT
-          Serial.println("[Main] GOODNIGHT button pressed.");
-          
-          // Queue the one-off "goodnight" action for the retry queue
-          pendingAction = "goodnight";
-          publishRetryCount = 0;
-          
-          allLightsActive = false;
-          delay(150); // Debounce
-        } else {
-          // Right side: CANCEL
-          Serial.println("[Main] CANCEL button pressed.");
-          allLightsActive = false;
-          delay(150); // Debounce
-        }
-      }
+    static unsigned long lastToggleTime = 0;
+    if (!lastTouchedState && (millis() - lastToggleTime > 500)) {
+      lastToggleTime = millis();
+      studioOn = !studioOn;
+      Serial.printf("[Main] Screen touched! Studio state toggled: %s\n", studioOn ? "ON" : "OFF");
       
-      /* Commented out old color picker logic for future use
-      if (!lastTouchedState) {
-        if (dist_sq <= CLOSE_BTN_RADIUS * CLOSE_BTN_RADIUS) {
-          colorPickerActive = false;
-          Serial.println("[Main] Color Picker overlay closed (checkmark).");
-          delay(150);
-        }
-      }
-      if (dist_sq >= CLOSE_BTN_RADIUS * CLOSE_BTN_RADIUS && 
-          dist_sq <= WHEEL_OUTER_RADIUS * WHEEL_OUTER_RADIUS) {
-        float angle_deg = atan2(dy, dx) * RAD_TO_DEG;
-        if (angle_deg < 0) angle_deg += 360;
-        int segIndex = (int)(angle_deg) / 36 % 10;
-        activeSegmentIndex = segIndex;
-        activeColor = DisplayManager::getSegmentColor(activeSegmentIndex);
-        static unsigned long lastPrintTime = 0;
-        if (millis() - lastPrintTime >= 100) {
-          Serial.printf("[Main] Color drag: Segment=%d, RGB=0x%04X\n", activeSegmentIndex, activeColor);
-          lastPrintTime = millis();
-        }
-      }
-      */
-    } else if (brightnessPickerActive) {
-      if (dist_sq <= 33 * 33) {
-        // Tapped checkmark button in the center
-        if (!lastTouchedState) {
-          brightnessPickerActive = false;
-          Serial.println("[Main] Brightness Picker closed (checkmark).");
-          delay(150); // Debounce
-        }
-      } else if (dist_sq >= 70 * 70 && dist_sq <= 110 * 110) {
-        // Dragging/Tapping inside the slider zone
-        float angle_deg = atan2(dy, dx) * RAD_TO_DEG;
-        if (angle_deg < 0) angle_deg += 360;
-        
-        // Arc slider runs from 135 (bottom-left) to 405 (bottom-right)
-        // Normalize the touch angle to fit within the active range, handling the dead-zone gap
-        float angle = angle_deg;
-        if (angle >= 45 && angle < 90) {
-          // Closer to 100% end (45 degrees / 405 degrees)
-          angle = 405.0f;
-        } else if (angle >= 90 && angle < 135) {
-          // Closer to 0% end (135 degrees)
-          angle = 135.0f;
-        } else if (angle < 45) {
-          // Wrap angles in [0, 45] to [360, 405]
-          angle += 360.0f;
-        }
-        
-        int newBr = (int)((angle - 135.0f) * 100.0f / 270.0f);
-        if (newBr < 1) newBr = 1;
-        if (newBr > 100) newBr = 100;
-        
-        if (brightness != newBr) {
-          brightness = newBr;
-          static unsigned long lastPrintTime = 0;
-          if (millis() - lastPrintTime >= 100) {
-            Serial.printf("[Main] Brightness drag: %d%%\n", brightness);
-            lastPrintTime = millis();
-          }
-        }
-      }
-    } else {
-      // Normal Quadrant Interactions
-      if (!lastTouchedState) {
-        if (dist_sq <= 33 * 33) {
-          // Center tapped: open brightness picker overlay!
-          brightnessPickerActive = true;
-          ignoreUntilRelease = true;
-          Serial.println("[Main] Opening Brightness Picker overlay...");
-        }
-        else if (tx < SCREEN_CENTER_X && ty < SCREEN_CENTER_Y) {
-          // Top-Left: Power Toggle
-          lampOn = !lampOn;
-          Serial.printf("[Main] Power Switch toggled: %s\n", lampOn ? "ON" : "OFF");
-        } 
-        else if (tx >= SCREEN_CENTER_X && ty < SCREEN_CENTER_Y) {
-          // Top-Right: Open All Lights Overlay
-          allLightsActive = true;
-          ignoreUntilRelease = true;
-          Serial.println("[Main] Opening All Lights overlay...");
-        } 
-        else if (tx < SCREEN_CENTER_X && ty >= SCREEN_CENTER_Y) {
-          // Bottom-Left: Brightness Down (-)
-          brightness = max(brightness - BRIGHTNESS_STEP, MIN_BRIGHTNESS);
-          Serial.printf("[Main] Brightness decreased: %d%%\n", brightness);
-        } 
-        else if (tx >= SCREEN_CENTER_X && ty >= SCREEN_CENTER_Y) {
-          // Bottom-Right: Brightness Up (+)
-          brightness = min(brightness + BRIGHTNESS_STEP, MAX_BRIGHTNESS);
-          Serial.printf("[Main] Brightness increased: %d%%\n", brightness);
-        }
-        delay(150); // Small debounce to prevent accidental double-clicks
-      }
+      // Update local display immediately for visual responsiveness
+      DisplayManager::update(studioOn);
+      
+      // Queue publish to MQTT broker
+      needPublishState = true;
+      publishRetryCount = 0;
+      
+      delay(150); // Small debounce to prevent accidental double-clicks
     }
-  }
-  
-  // Queue state updates to Home Assistant when user releases touch
-  if (lastTouchedState && !isTouched && !displaySleeping && !ignoreUntilRelease) {
-    needPublishState = true;
-    publishRetryCount = 0;
   }
   
   lastTouchedState = isTouched;
 
-  // Redraw the screen only when the display is active/awake
+  // Redraw the screen only when the display is active/awake and state has updated
+  // Note: DisplayManager::update handles redraws. To avoid constantly writing over SPI,
+  // we can only redraw when the state changes. But wait! The original loop did it unconditionally
+  // when not sleeping. Since update does pushSprite, let's keep it consistent or optimize.
+  // Actually, GC9A01 uses SPI, updating every loop is fine, but we can do it periodically or just when needed.
+  // Let's do it every loop when awake as per original code, to maintain animations/progress bar functionality.
   if (!displaySleeping) {
-    DisplayManager::update(
-      lampOn,
-      brightness,
-      activeColor,
-      activeSegmentIndex,
-      allLightsActive,
-      brightnessPickerActive
-    );
+    DisplayManager::update(studioOn);
   }
 
   // Yield to keep the ESP32 Wi-Fi stack happy

@@ -16,11 +16,8 @@ namespace MQTTManager {
     // Check if the client is connected to the broker
     bool isConnected();
 
-    // Publish the current global lamp state to Home Assistant
-    bool publishState();
-
-    // Publish a custom one-off action event (like goodnight) to a dedicated topic
-    bool publishAction(const char* action);
+    // Publish the studio power state to all devices and the remote's own status topic
+    bool publishStudioState(bool isOn);
 
     // Force an immediate MQTT reconnection attempt (bypassing the 5-second backoff)
     void forceReconnect();

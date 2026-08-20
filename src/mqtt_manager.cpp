@@ -20,132 +20,60 @@
 #endif
 
 // Link global state variables in main.cpp
-extern bool lampOn;
-extern int brightness;
-extern uint16_t activeColor;
-extern int activeSegmentIndex;
-// extern bool colorPickerActive;
-extern const char* activeScene;
+extern bool studioOn;
 
 namespace MQTTManager {
-    struct RGBColor {
-        uint8_t r;
-        uint8_t g;
-        uint8_t b;
-    };
-
-    // Standard RGB values mapped to our 10 discrete wedges
-    static const RGBColor SEGMENT_RGBS[10] = {
-        {225, 240, 255}, // 0: Cold White
-        {255, 230, 160}, // 1: Warm White
-        {255, 0, 0},     // 2: Red
-        {255, 105, 180}, // 3: Pink
-        {255, 165, 0},   // 4: Orange
-        {255, 255, 0},   // 5: Yellow
-        {0, 200, 0},     // 6: Green
-        {0, 0, 255},     // 7: Blue
-        {75, 0, 130},    // 8: Indigo
-        {180, 50, 240}   // 9: Violet
-    };
-
-    static const char* SEGMENT_SCENE_NAMES[10] = {
-        "cold_white", "warm_white", "red", "pink", "orange",
-        "yellow", "green", "blue", "indigo", "violet"
-    };
-
     static WiFiClient wifiClient;
     static PubSubClient client(wifiClient);
     
     static unsigned long lastReconnectAttempt = 0;
-    
-    // Home Assistant MQTT Light Topics
-    static const char* discoveryTopic = "homeassistant/light/home_remote/config";
-    static const char* stateTopic     = "homeassistant/light/home_remote/state";
-    static const char* setTopic       = "homeassistant/light/home_remote/set";
-
-    // Helper: Finds which of our 10 segments is closest to the target RGB color
-    int findClosestSegment(uint8_t r, uint8_t g, uint8_t b) {
-        int min_dist = 999999;
-        int best_index = 1; // Default to Warm White
-        
-        for (int i = 0; i < 10; i++) {
-            int dr = (int)r - SEGMENT_RGBS[i].r;
-            int dg = (int)g - SEGMENT_RGBS[i].g;
-            int db = (int)b - SEGMENT_RGBS[i].b;
-            int dist = dr * dr + dg * dg + db * db;
-            if (dist < min_dist) {
-                min_dist = dist;
-                best_index = i;
-            }
-        }
-        return best_index;
-    }
 
     // MQTT message receiver callback
     void callback(char* topic, byte* payload, unsigned int length) {
         Serial.print("[MQTT] Message arrived on topic: ");
         Serial.println(topic);
         
-        // Parse incoming HA command JSON
-        StaticJsonDocument<512> doc;
-        DeserializationError error = deserializeJson(doc, payload, length);
-        if (error) {
-            Serial.print("[MQTT] JSON parse failed: ");
-            Serial.println(error.c_str());
-            return;
-        }
+        // Parse incoming HA command (usually "ON" or "OFF")
+        char payloadStr[16];
+        unsigned int len = min(length, (unsigned int)sizeof(payloadStr) - 1);
+        memcpy(payloadStr, payload, len);
+        payloadStr[len] = '\0';
         
-        // 1. Parse ON/OFF switch state
-        if (doc.containsKey("state")) {
-            const char* stateVal = doc["state"];
-            bool newLampOn = (strcmp(stateVal, "ON") == 0);
-            if (newLampOn != lampOn) {
-                lampOn = newLampOn;
-                Serial.printf("[MQTT] State updated from HA: %s\n", lampOn ? "ON" : "OFF");
-            }
-        }
-        
-        // 2. Parse Brightness level (0-255)
-        if (doc.containsKey("brightness")) {
-            int briVal = doc["brightness"];
-            // Map 0-255 range to 10%-100%
-            int newBrightness = (briVal * 100) / 255;
-            // Round to the nearest BRIGHTNESS_STEP (10)
-            newBrightness = ((newBrightness + BRIGHTNESS_STEP / 2) / BRIGHTNESS_STEP) * BRIGHTNESS_STEP;
-            if (newBrightness < MIN_BRIGHTNESS) newBrightness = MIN_BRIGHTNESS;
-            if (newBrightness > MAX_BRIGHTNESS) newBrightness = MAX_BRIGHTNESS;
-            
-            if (newBrightness != brightness) {
-                brightness = newBrightness;
-                Serial.printf("[MQTT] Brightness updated from HA: %d%%\n", brightness);
-            }
-        }
-        
-        // 3. Parse RGB Color values
-        if (doc.containsKey("color")) {
-            uint8_t r = doc["color"]["r"];
-            uint8_t g = doc["color"]["g"];
-            uint8_t b = doc["color"]["b"];
-            
-            int newSeg = findClosestSegment(r, g, b);
-            if (newSeg != activeSegmentIndex) {
-                activeSegmentIndex = newSeg;
-                activeColor = DisplayManager::getSegmentColor(activeSegmentIndex);
-                Serial.printf("[MQTT] Color updated from HA: Segment %d (0x%04X)\n", activeSegmentIndex, activeColor);
-            }
+        Serial.printf("[MQTT] Payload received: %s\n", payloadStr);
+
+        bool newStudioState = studioOn;
+        if (strcmp(payloadStr, "ON") == 0) {
+            newStudioState = true;
+        } else if (strcmp(payloadStr, "OFF") == 0) {
+            newStudioState = false;
         }
 
-        // If this message arrived on our own state topic, it's our initial boot sync
-        if (strcmp(topic, stateTopic) == 0) {
-            client.unsubscribe(stateTopic);
-            Serial.println("[MQTT] Initial state synchronized from retained message. Unsubscribed from state topic.");
+        // Handle initial boot sync from the state topic
+        if (strcmp(topic, MQTT_REMOTE_STATE) == 0) {
+            client.unsubscribe(MQTT_REMOTE_STATE);
+            Serial.println("[MQTT] Initial state synchronized from state topic. Unsubscribed.");
+            if (newStudioState != studioOn) {
+                studioOn = newStudioState;
+                Serial.printf("[MQTT] State initialized to: %s\n", studioOn ? "ON" : "OFF");
+            }
+            return;
+        }
+
+        // Handle incoming commands from Home Assistant on the set topic
+        if (strcmp(topic, MQTT_REMOTE_SET) == 0) {
+            if (newStudioState != studioOn) {
+                studioOn = newStudioState;
+                Serial.printf("[MQTT] Studio state updated from HA command: %s\n", studioOn ? "ON" : "OFF");
+                // Sync physical devices and publish state back
+                publishStudioState(studioOn);
+            }
         }
     }
 
     // Connects to the MQTT broker and registers auto-discovery
     bool connect() {
         Serial.printf("[MQTT] Connecting to broker %s:%d...\n", MQTT_HOST, MQTT_PORT);
-        String clientId = "home_remote_" + String(random(0xffff), HEX);
+        String clientId = "studio_remote_" + String(random(0xffff), HEX);
         
         bool success = false;
         if (strlen(MQTT_USER) > 0) {
@@ -157,28 +85,26 @@ namespace MQTTManager {
         if (success) {
             Serial.println("[MQTT] Connected successfully!");
             
-            // Publish MQTT discovery payload to auto-register with Home Assistant
-            StaticJsonDocument<512> doc;
-            doc["name"] = "Home Remote";
-            doc["unique_id"] = "home_remote_1";
-            doc["state_topic"] = stateTopic;
-            doc["command_topic"] = setTopic;
-            doc["schema"] = "json";
-            doc["brightness"] = true;
-            JsonArray colorModes = doc.createNestedArray("supported_color_modes");
-            colorModes.add("rgb");
+            // Publish MQTT discovery payload to auto-register with Home Assistant as a switch
+            StaticJsonDocument<256> doc;
+            doc["name"] = "Studio Controller";
+            doc["unique_id"] = "studio_controller_1";
+            doc["state_topic"] = MQTT_REMOTE_STATE;
+            doc["command_topic"] = MQTT_REMOTE_SET;
+            doc["payload_on"] = "ON";
+            doc["payload_off"] = "OFF";
             
-            char buffer[512];
+            char buffer[256];
             serializeJson(doc, buffer);
-            client.publish(discoveryTopic, buffer, true);
-            Serial.println("[MQTT] Auto-discovery config published.");
+            client.publish(MQTT_REMOTE_DISCOVERY, buffer, true);
+            Serial.println("[MQTT] Switch discovery config published.");
             
-            // Subscribe to incoming Home Assistant set commands
-            client.subscribe(setTopic);
+            // Subscribe to incoming command topic
+            client.subscribe(MQTT_REMOTE_SET);
             Serial.println("[MQTT] Subscribed to command topic.");
             
-            // Subscribe to state topic temporarily to read the last known state
-            client.subscribe(stateTopic);
+            // Subscribe to state topic temporarily to read last known state on startup
+            client.subscribe(MQTT_REMOTE_STATE);
             Serial.println("[MQTT] Subscribed to state topic for initial sync.");
             return true;
         } else {
@@ -191,7 +117,6 @@ namespace MQTTManager {
     void init() {
         client.setServer(MQTT_HOST, MQTT_PORT);
         client.setCallback(callback);
-        // Increase MQTT packet buffer size for discovery JSON packets
         client.setBufferSize(512);
         Serial.println("[MQTT] MQTT Manager initialized.");
     }
@@ -220,49 +145,30 @@ namespace MQTTManager {
         lastReconnectAttempt = 0;
     }
 
-    bool publishState() {
+    bool publishStudioState(bool isOn) {
         if (!client.connected()) return false;
         
-        StaticJsonDocument<256> doc;
-        doc["state"] = lampOn ? "ON" : "OFF";
-        doc["brightness"] = (brightness * 255) / 100;
+        const char* payload = isOn ? "ON" : "OFF";
         
-        // Decode RGB values from active segment color to update the color wheel slider in HA
-        uint16_t color = activeColor;
-        uint8_t r = ((color >> 11) & 0x1F) * 255 / 31;
-        uint8_t g = ((color >> 5) & 0x3F) * 255 / 63;
-        uint8_t b = (color & 0x1F) * 255 / 31;
+        // 1. Publish command to Studio Smart Plug
+        bool successPlug = client.publish(MQTT_STUDIO_PLUG_COMMAND, payload, true);
         
-        JsonObject colorObj = doc.createNestedObject("color");
-        colorObj["r"] = r;
-        colorObj["g"] = g;
-        colorObj["b"] = b;
-        doc["color_mode"] = "rgb";
+        // 2. Publish command to Studio Light Group
+        bool successLight = client.publish(MQTT_STUDIO_LIGHT_COMMAND, payload, true);
         
-        // Expose current scene/segment selection
-        doc["scene"] = activeScene;
+        // 3. Publish state to Studio Remote self status
+        bool successRemote = client.publish(MQTT_REMOTE_STATE, payload, true);
         
-        char buffer[256];
-        serializeJson(doc, buffer);
-        bool success = client.publish(stateTopic, buffer, true);
+        bool allSuccess = successPlug && successLight && successRemote;
         
-        if (success) {
-            Serial.print("[MQTT] State broadcast: ");
-            Serial.println(buffer);
+        if (allSuccess) {
+            Serial.printf("[MQTT] Studio state broadcast: %s\n", payload);
         } else {
-            Serial.println("[MQTT] State broadcast failed!");
+            Serial.printf("[MQTT] State broadcast warning: plug=%s, light=%s, remote=%s\n",
+                          successPlug ? "OK" : "FAIL",
+                          successLight ? "OK" : "FAIL",
+                          successRemote ? "OK" : "FAIL");
         }
-        return success;
-    }
-
-    bool publishAction(const char* action) {
-        if (!client.connected()) return false;
-        bool success = client.publish("home_remote/action", action);
-        if (success) {
-            Serial.printf("[MQTT] Action published to home_remote/action: %s\n", action);
-        } else {
-            Serial.printf("[MQTT] Action publication failed: %s\n", action);
-        }
-        return success;
+        return allSuccess;
     }
 }

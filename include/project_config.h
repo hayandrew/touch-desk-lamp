@@ -36,15 +36,13 @@
 // Arduino OTA Settings
 #define OTA_PORT 3232
 
-// Lamp Settings
-#define DEFAULT_BRIGHTNESS 80
-#define BRIGHTNESS_STEP 10
-#define MIN_BRIGHTNESS 10
-#define MAX_BRIGHTNESS 100
+// Studio Device Topics
+#define MQTT_STUDIO_PLUG_COMMAND    "homeassistant/switch/studio_plug/set"
+#define MQTT_STUDIO_LIGHT_COMMAND   "homeassistant/light/studio_studio/set"
 
-// Color Wheel Settings
-#define WHEEL_INNER_RADIUS 55
-#define WHEEL_OUTER_RADIUS 110
-#define CLOSE_BTN_RADIUS   30
+// Studio Remote (Self) Topics
+#define MQTT_REMOTE_DISCOVERY "homeassistant/switch/studio_remote/config"
+#define MQTT_REMOTE_STATE     "homeassistant/switch/studio_remote/state"
+#define MQTT_REMOTE_SET       "homeassistant/switch/studio_remote/set"
 
 #endif // PROJECT_CONFIG_H
